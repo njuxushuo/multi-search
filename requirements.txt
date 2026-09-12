@@ -1,0 +1,12 @@
+torch
+transformers
+datasets
+accelerate
+peft
+trl
+vllm
+rank-bm25
+bm25s
+pyserini
+sentencepiece
+wandb
