@@ -1,0 +1,9 @@
+model_name_or_path: /data3/xs/models/Qwen3.5-4B-Base
+adapter_name_or_path: /data0/xs/search/outputs/sft_qwen35_4b_lora_multiturn_masked
+template: qwen3_5
+finetuning_type: lora
+trust_remote_code: true
+export_dir: /data0/xs/search/outputs/sft_qwen35_4b_lora_multiturn_masked_merged
+export_size: 5
+export_device: cpu
+export_legacy_format: false

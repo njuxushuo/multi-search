@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Local datasets, model weights, indexes, and training artifacts
+/data/
+/models/
+/checkpoints/
+/outputs/
+/logs/
+/archive/
+/swanlog/
+/.cache/
+
+*.bin
+*.safetensors
+*.ckpt
+*.onnx
+*.pt
+*.pth
+
+# Experiment trackers and generated Python packaging files
+wandb/
+*.egg-info/
+build/
+dist/

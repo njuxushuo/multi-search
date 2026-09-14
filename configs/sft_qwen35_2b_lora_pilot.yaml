@@ -1,0 +1,43 @@
+# OBSOLETE PILOT — not part of the exact experiment. Use
+# configs/sft_qwen35_4b_lora.yaml only for the formal run.
+# Search-R1 SFT pilot: Qwen3.5-2B-Base + oracle-answer records
+model_name_or_path: /data3/xs/models/Qwen3.5-2B-Base
+trust_remote_code: true
+
+stage: sft
+do_train: true
+do_eval: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_target: all
+
+dataset_dir: /data0/xs/search/data/processed/search_sft_pilot
+dataset: searchqa_sft_train
+eval_dataset: searchqa_sft_eval
+template: qwen3_5_nothink
+cutoff_len: 1024
+preprocessing_num_workers: 4
+dataloader_num_workers: 2
+
+output_dir: /data0/xs/search/outputs/sft_qwen35_2b_lora_pilot
+logging_steps: 1
+save_steps: 100
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: true
+report_to: swanlab
+swanlab_project: search-r1
+swanlab_run_name: qwen35-2b-sft-oracle-pilot
+
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+seed: 42
