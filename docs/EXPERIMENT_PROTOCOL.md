@@ -209,28 +209,40 @@ v2 已专门保留给“累计检索历史并按 token budget 裁剪”。若后
 | 版本 | 重复查询 | 搜索预算后的回答机会 | 检索历史上下文 | 用途 |
 |---|---|---|---|---|
 | v0 | 归一化查询重复后立即终止 | 无；连续 8 轮搜索后直接结束 | 原始问题 + 最近一次检索交换 | 冻结的四模型旧协议基线 |
-| v1 | 不立即终止，返回标准纠错提示并继续 | 有；最多 8 次搜索尝试后保留一次最终回答生成 | 与 v0 相同，仍只保留最近一次检索交换 | 隔离评估终止规则的影响，并加入 4B-Instruct |
+| v1 | 不立即终止，不重复调用 BM25，返回中性 no-progress observation | 有；最多 8 次搜索尝试后保留一次最终回答生成 | 原问题 + 最近一次有效检索；纠错生成时临时附带当前重复动作和中性 observation | 隔离评估终止规则的影响，并加入 4B-Instruct |
 | v2 | 继承 v1 | 继承 v1 | 累计保留全部检索交换，超过 prompt token budget 时确定性裁剪 | 隔离评估多跳历史证据保留的影响 |
 
-### v1 预定协议：重复查询与最终回答机会
+### v1 冻结实现协议：重复查询与最终回答机会
 
 v1 不是修改 v0 文件，而是新的评测协议和输出命名空间。除以下两点外，v0 参数保持不变。
+
+实现协议名为 `qwen35_search_eval_v1_neutral_repeat_final_answer`。首次正式运行前的关键文件 SHA-256：
+
+```text
+9ccb732f4835bf435d8a5dd580b04e7f00ea1079f75b11c00078f07356c0299c  scripts/eval_protocol_v1.py
+ebea9564d302a56d9408a5c1ca0a9cf28f9e967ce4ad71869022dcbb8cac040b  scripts/evaluate_qwen35_search_v1.py
+4551e83fc85bcb93bfbd059b1188fc790b84d9b510a0dc6495831cd29ad46dbf  scripts/merge_eval_shards_v1.py
+912b2251795842f3cbd7727a58446714492c9fb19d6a6bb6610c0faa527e843c  scripts/run_eval_qwen35_search_v1.sh
+9ce43c92f2fa2480c76c9b6aba84ebcf76d3c3bc6cd8e62d300464d500225656  scripts/run_eval_qwen35_search_v1_4gpu.sh
+```
 
 #### 1. 重复查询不再立即结束
 
 - 每次模型输出合法 `<search>` 都使 `search_attempt_count += 1`，包括重复查询。
 - 查询经与 v0 相同的 `normalize()` 后若与历史查询相同，不再次调用 BM25，不增加 `search_count`。
-- 环境追加固定、与 gold 无关的纠错观察，要求模型改写查询或基于已有证据作答。
+- 环境追加固定、与 gold 无关且不使用“错误/重复”等措辞的中性 no-progress observation。
 - 该次重复仍消耗一次搜索尝试预算，记录 `repeated_search_query` 和 no-progress，但轨迹继续。
 - 不同查询返回相同文档时仍执行 BM25，增加成功搜索和 redundant/no-progress 计数，并继续运行。
 
-建议固定纠错文字如下，实施时若修改文字必须更新协议版本或脚本哈希：
+固定 observation 如下，实施时若修改文字必须更新协议版本或脚本哈希：
 
 ```text
 <information>
-This search query repeats an earlier query and provides no new retrieval. Reformulate the query using a different entity or relation, or answer now if the existing evidence is sufficient.
+No new information was retrieved. Use the available evidence to answer, or issue a different search query.
 </information>
 ```
+
+为避免短窗口在纠错时把最近证据挤掉，下一次生成临时使用“原始问题 + 最近一次有效 search/information + 当前重复 search + 中性 observation”。如果模型随后产生新的有效搜索，窗口立即恢复为“原始问题 + 最新一次有效 search/information”。这不累计更早检索历史，因此不引入 v2 的变量。
 
 #### 2. 为最终答案预留一次生成
 
@@ -241,7 +253,7 @@ This search query repeats an earlier query and provides no new retrieval. Reform
 - 最终回答轮只接受合法 `<answer>`；若模型再次输出 `<search>`，不执行检索，以 `search_limit` 结束。
 - 因此 v1 最多有 8 次搜索尝试和 1 次保留回答生成，即最多 9 次 assistant generation。第 9 次不是新的搜索额度。
 
-若第 8 次尝试成功，先返回实际 `<information>`，再追加“搜索预算已耗尽、现在回答”的指令；若第 8 次尝试是重复或其他可恢复 no-op，则在纠错观察中直接要求使用已有证据回答。
+若第 8 次尝试成功，先返回实际 `<information>`，再追加“搜索预算已耗尽、现在回答”的指令；若第 8 次尝试是重复查询，则返回中性的预算耗尽 observation，要求使用已有证据回答。空查询、空检索结果、检索异常和格式错误仍是终止性错误，不获得额外恢复轮。
 
 #### v1 局部重测边界
 
@@ -250,8 +262,9 @@ This search query repeats an earlier query and provides no new retrieval. Reform
 - 未触发上述行为且输出不受状态机变化影响的样本可以原样复用。
 - 普通 `format_error`、合法但错误的 `<answer>`、空检索结果和检索服务错误仍按 v0 停止；v1 不向模型反馈答案是否正确，也不使用 gold 决定是否继续。
 - 合并结果必须保存 `origin=v0_reused`、`origin=v1_continued` 或 `origin=v1_rerun`，以便审计。
+- v0 evaluator 和输出保持只读；v1 使用独立入口 `scripts/evaluate_qwen35_search_v1.py`、独立合并器和 `outputs/eval/v1/` 命名空间。未来 v2 必须使用另一入口和 `outputs/eval/v2/`，不得覆盖 v1。
 
-v1 至少报告：被续测 ID 数、重复查询恢复率、8 次搜索后回答率、恢复正确数、全量 EM/F1 增量、成功搜索和搜索尝试增量。
+v1 至少报告：被续测 ID 数、重复查询恢复率、8 次搜索后回答率、恢复正确数、全量 EM/F1 增量、成功搜索和搜索尝试增量。可恢复的重复/无新文档与格式错误、检索错误等终止性错误分开记录；端到端 EM/F1 仍对全部题目计分。
 
 ### v2 预定协议：累计历史与 token budget
 

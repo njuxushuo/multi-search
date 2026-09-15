@@ -5,7 +5,8 @@
 ## 2026-09-15 更新
 
 - 当前第一版统一评测定义为 v0，完整协议已冻结在 `docs/EXPERIMENT_PROTOCOL.md`。
-- Base、LoRA 的 v0 50k 评测已完成；Full SFT 正在 GPU 0–3 上进行四路数据并行评测。27B Teacher 已在其他服务器评测，本机顺序脚本默认不再启动 Teacher（仅显式设置 `EVAL_RUN_TEACHER=1` 时启动）。
+- Base、LoRA、Full SFT 的 v0 50k 评测均已完成并严格合并；Full SFT 最终 EM 27.892%、F1 33.134%、平均成功检索 1.815 次、平均搜索尝试 2.266 次。27B Teacher 已在其他服务器评测，本机顺序脚本默认不再启动 Teacher（仅显式设置 `EVAL_RUN_TEACHER=1` 时启动）。
+- v1 已按“重复查询不调用 BM25、返回中性 no-progress observation、最多 8 次搜索尝试后追加一次 answer-only generation”实现为独立 evaluator；v0 文件未修改，v1 输出固定隔离在 `outputs/eval/v1/`，完成核验后待启动。
 - 近期实验顺序已整理到 `docs/ROADMAP.md` 的“近期实验计划”：先完成 v0 四模型基线，再局部修复重复搜索提前终止并加入 Qwen3.5-4B-Instruct；随后审计旧 Teacher 过滤损失，完成 Prompt 对齐、数据重建和新 Full SFT。RL 暂缓。
 - v0 结果不可覆盖；v1 只修正重复查询立即终止，并在最多 8 次搜索尝试后额外提供一次最终回答生成；v2 继承 v1，再改为累计保留检索历史并按 3328-token 输入预算确定性裁剪。
 
