@@ -6,6 +6,9 @@ checkpoints/
 outputs/
 logs/
 data/
+archive/
+models/
+third_party/
 *.bin
 *.safetensors
 wandb/

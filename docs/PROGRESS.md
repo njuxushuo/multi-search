@@ -1,32 +1,46 @@
 # 项目进度
 
-> 持续更新。每次实验结束后记录日期、提交版本、配置和结论。
+更新时间：2026-09-15
 
-## 当前状态
-- 总体阶段：0 项目准备
-- 最近更新：2026-09-12
-- 当前阻塞：暂无
+## 2026-09-15 更新
 
-## 阶段清单
+- 当前第一版统一评测定义为 v0，完整协议已冻结在 `docs/EXPERIMENT_PROTOCOL.md`。
+- Base、LoRA 的 v0 50k 评测已完成；Full SFT 正在 GPU 0–3 上进行四路数据并行评测。27B Teacher 已在其他服务器评测，本机顺序脚本默认不再启动 Teacher（仅显式设置 `EVAL_RUN_TEACHER=1` 时启动）。
+- 近期实验顺序已整理到 `docs/ROADMAP.md` 的“近期实验计划”：先完成 v0 四模型基线，再局部修复重复搜索提前终止并加入 Qwen3.5-4B-Instruct；随后审计旧 Teacher 过滤损失，完成 Prompt 对齐、数据重建和新 Full SFT。RL 暂缓。
+- v0 结果不可覆盖；v1 只修正重复查询立即终止，并在最多 8 次搜索尝试后额外提供一次最终回答生成；v2 继承 v1，再改为累计保留检索历史并按 3328-token 输入预算确定性裁剪。
 
-- [ ] 0. 环境与版本固定
-- [ ] 1. HotpotQA/NQ 数据准备
-- [ ] 2. Wikipedia 2018 + BM25 索引
-- [ ] 3. 多轮搜索环境与基线推理
-- [ ] 4. Teacher 轨迹生成与清洗
-- [ ] 5. 学生模型 SFT
-- [ ] 6. Outcome-reward GRPO
-- [ ] 7. 成本感知奖励
-- [ ] 8. DAPO 训练
-- [ ] 9. 过程级 credit assignment
-- [ ] 10. 消融、评估与面试材料
+## 2026-09-14 历史记录
 
-## 更新模板
+修正版多轮 SFT 数据已重建；LoRA 正在 GPU 0–3 上运行，成功后由 watcher 自动启动 full SFT。
 
-### YYYY-MM-DD｜阶段/实验名称
-- 目标：
-- 使用数据/模型：
-- 配置与命令：
-- 完成内容：
-- 结果：
-- 问题与下一步：
+### 当日结论
+
+项目已完成数据、Wikipedia 2018、BM25 和 Teacher 轨迹准备。错误的旧 SFT 数据已移入 `archive/invalid_sft_data_deleted-20260914-1208/`；从 Teacher 合并文件重新生成了 15,000 train + 1,000 eval 多轮数据，evidence 保留为非监督 turn。旧 full SFT 已停止，不再作为正式结果。
+
+### 当日已完成
+
+- Qwen3.5-27B Teacher 轨迹：合并 18,453 条；严格筛选出 15,000 train + 1,000 eval。
+- Wikipedia 2018：21,015,324 篇文档；BM25 Lucene 索引构建成功。
+- LoRA SFT：1 epoch / 1,875 steps，train loss 1.0806、eval loss 1.0571；因 loss mask 问题作废。
+- 已固定统一评测入口：Base、SFT、RL 均使用同一 test.parquet 50k 子集、BM25 top-k=3、最多 8 轮，并输出 EM 与平均检索次数。
+
+### 当日修正
+
+`validate_teacher_traces.py` 现在将每个 `<information>...</information>` 片段改成独立 `human` turn，并标记 `metadata.loss_mask=assistant_turns_only_v2`。train/eval 结构校对通过，所有 evidence 保留且不在 gpt turn 中。
+
+修正版 LoRA 实验 `qwen35-4b-lora-multiturn-policy-mask` 已启动，SwanLab run 为 `pxhoz0v5`；watcher 将在 LoRA 成功后启动 `qwen35-4b-full-multiturn-policy-mask`。
+
+正式重跑前必须抽样检查 token labels：所有 evidence span 的 label 应为 `-100`，assistant 的 think/search/answer token 应保留有效 label；同时确认 eval 使用同一 mask 规则。
+
+### 当日待办（已由 2026-09-15 计划取代）
+
+1. 用修正数据重跑 LoRA，记录有效 label token 比例、loss 和生成质量。
+2. 重跑 Full SFT，并保存最佳 checkpoint 与配置快照。
+3. 完成 Base/SFT 50k 评测，写入 `RESULTS.md`。
+4. 在 SFT 结果稳定后实现 outcome GRPO → 成本奖励 → DAPO → 过程级 credit assignment。
+
+### 当日产物
+
+- 数据：`data/processed/search_sft_qwen35_4b/`
+- LoRA（诊断结果）：`outputs/sft_qwen35_4b_lora/`
+- Full SFT 日志/checkpoint：`outputs/sft_qwen35_4b_full/`

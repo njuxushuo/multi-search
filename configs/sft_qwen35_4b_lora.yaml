@@ -1,0 +1,48 @@
+# Exact cold-start SFT configuration from the project specification.
+# The dataset must contain 15,000 teacher-generated, validated tool-use traces.
+model_name_or_path: /data3/xs/models/Qwen3.5-4B-Base
+trust_remote_code: true
+
+stage: sft
+do_train: true
+do_eval: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_target: all
+
+dataset_dir: /data0/xs/search/data/processed/search_sft_qwen35_4b
+dataset: searchqa_sft_train_15k
+eval_dataset: searchqa_sft_eval
+template: qwen3_5
+cutoff_len: 4096
+preprocessing_num_workers: 8
+dataloader_num_workers: 2
+
+output_dir: /data0/xs/search/outputs/sft_qwen35_4b_lora_multiturn_masked
+logging_steps: 1
+save_steps: 250
+save_total_limit: 3
+eval_strategy: steps
+eval_steps: 250
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+plot_loss: true
+overwrite_output_dir: false
+report_to: swanlab
+swanlab_project: search-r1
+swanlab_run_name: qwen35-4b-lora-multiturn-policy-mask
+
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+# Keep effective global batch at 8 with four GPUs: 4 * batch 1 * accumulation 2.
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+seed: 42

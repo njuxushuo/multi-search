@@ -1,12 +1,23 @@
-torch
-transformers
+# GPU-compatible Qwen3.5 inference baseline validated in the qwen35 environment
+# (NVIDIA driver 565.57.01 / CUDA 12.7). These pins do not make the original
+# vendored Search-R1 v0.1 rollout compatible: that adapter requires vLLM <=0.6.3.
+torch==2.10.0
+transformers==4.57.6
 datasets
 accelerate
 peft
 trl
-vllm
+vllm==0.18.0
+# Keep the Qwen3.5-compatible runtime components aligned with vLLM 0.18.
+huggingface_hub==0.36.2
+tokenizers==0.22.2
+flashinfer-python==0.6.6
+xgrammar==0.2.4
+compressed-tensors==0.13.0
 rank-bm25
 bm25s
 pyserini
 sentencepiece
 wandb
+faiss-cpu==1.15.0
+swanlab==0.9.1
