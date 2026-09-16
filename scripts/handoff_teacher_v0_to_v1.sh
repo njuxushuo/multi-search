@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 LEGACY_SUPERVISOR_PID="${LEGACY_SUPERVISOR_PID:?LEGACY_SUPERVISOR_PID is required}"
 CONDA_BIN="${CONDA_BIN:-/root/miniconda3/bin/conda}"
+export PATH="$(dirname "$CONDA_BIN"):$PATH"
 MANIFEST="${EVAL_MANIFEST:-data/processed/search_eval/searchqa_50k_seed42_hnb_first.jsonl}"
 V0_PREFIX="outputs/eval/qwen35_27b_teacher_50k_docnovelty"
 V0_MERGED="${V0_PREFIX}.jsonl"
