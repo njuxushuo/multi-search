@@ -31,5 +31,19 @@ if int(summary.get("examples", -1)) != 50000:
 print(json.dumps({"v1_examples": summary["examples"], "v1_em": summary.get("em")}, ensure_ascii=False))
 PY
 
+for _ in $(seq 1 20); do
+  busy=0
+  for gpu in 0 1 2 3; do
+    used=$(nvidia-smi -i "$gpu" --query-gpu=memory.used --format=csv,noheader,nounits | tr -d ' ')
+    [[ "$used" -le 1024 ]] || busy=1
+  done
+  [[ "$busy" -eq 0 ]] && break
+  sleep 30
+done
+for gpu in 0 1 2 3; do
+  used=$(nvidia-smi -i "$gpu" --query-gpu=memory.used --format=csv,noheader,nounits | tr -d ' ')
+  [[ "$used" -le 1024 ]] || { echo "GPU $gpu did not become idle (${used} MiB)" >&2; exit 2; }
+done
+
 echo "v1 evaluation is complete; starting gated R3.0 Teacher smoke/pilot"
 exec bash scripts/run_teacher_pilot_v3_smoke_then_full.sh
