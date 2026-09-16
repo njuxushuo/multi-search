@@ -349,7 +349,7 @@ R3.0 用于下一轮 27B Teacher 蒸馏、4B post-trained Full SFT 和同协议�
 | SFT | 从 post-trained 4B 独立开始的 Full SFT；不把 LoRA 作为必经步骤 |
 | RL | R3.0 SFT 通过端到端准入门槛前不启动 |
 
-机器可读单一真源为 `configs/protocols/searchqa_repro_v3_0_0.json`，当前 SHA-256 为 `a0643e884b497d0aa2d67218515dad9bce83968f708a873e8dffe9f19fa19133`。代码、轨迹、数据 manifest、checkpoint 和评测 summary 都必须写入同一个 `protocol_id` 及配置 SHA-256；路径命名统一使用 `searchqa_repro_v3_0_0`。任何配置改动都必须同步更新版本和校验和。
+机器可读单一真源为 `configs/protocols/searchqa_repro_v3_0_0.json`，当前 SHA-256 为 `69e21ed32b2a9864c7021914d4a3eac0e56a660acd0a094cce2483c390e43fd4`。代码、轨迹、数据 manifest、checkpoint 和评测 summary 都必须写入同一个 `protocol_id` 及配置 SHA-256；路径命名统一使用 `searchqa_repro_v3_0_0`。任何配置改动都必须同步更新版本和校验和。
 
 ### Canonical Prompt
 
@@ -426,7 +426,7 @@ SFT 构建阶段对每条 canonical 序列使用 Student tokenizer 精确计数�
 
 ### Teacher 候选生成与保存
 
-pilot 首先按 source/type/level 分层抽取约 2,000 个唯一问题，每题用不同确定性 seed 采样 4 条候选，形成约 8,000 个 rollout。建议初始解码为 `temperature=0.7`、`top_p=0.9`；所有候选都落盘，不能只保存通过项。
+pilot 使用冻结 manifest `data/processed/searchqa_repro_v3_0_0/teacher_pilot_manifest_2k_seed42.jsonl`：2,000 个归一化后唯一问题，HotpotQA/NQ=1,400/600，HotpotQA 内按原始 bridge/comparison × easy/medium/hard 比例分层；它排除固定 5k interactive dev 以及固定 50k final test 的所有同题 hash。manifest SHA-256 为 `c6ad15a0c96b356e0f03fe30fa9da28963db58a682e747c8d60d13f20e979d71`。每题用不同确定性 seed 采样 4 条候选，形成 8,000 个 rollout。初始解码为 `temperature=0.7`、`top_p=0.9`；所有候选都落盘，不能只保存通过项。
 
 候选记录至少保存：稳定 question ID、source、split、gold aliases、Hotpot type/level/supporting facts、原始输出、canonical 序列、逐轮 prompt token 数、query、doc ID/rank/score、截断前后 evidence、最终答案、终止原因、所有过滤标签、模型/Prompt/protocol/tokenizer/retriever 版本和 seed。
 
@@ -484,6 +484,8 @@ Qwen3.5 官方 chat template 会在第一轮 assistant generation prefix 末尾�
 - 快速 dev：上述固定集合的前 1,000 题，HotpotQA 707 + NQ 293，SHA-256（canonical rows）`0e5e5586f248e10a0f10184f19ff4d1b9a6cb8a6528480dc80cdf284fdc714f4`。
 
 每 500 optimizer steps 暂停训练并释放 GPU，用四卡评测 quick dev，结果上传 SwanLab 后从同一 checkpoint 恢复；epoch 末/最终候选在完整 5k dev 上评测。这样不会在 ZeRO-3 训练仍占显存时并发启动 vLLM，也不会改变完整训练的 scheduler 总步数。
+
+Full SFT 的 cosine scheduler 从一开始按最多 2 epochs/3,750 steps 构建，但编排器在第 1 epoch 的 1,875 step 强制保存并停止。第 2 epoch 不是默认动作：只有 interactive dev 与 teacher-forced loss gate 通过后，才显式批准并从可恢复的 `checkpoint-1875` 延续同一 scheduler；禁止先按 1 epoch 将学习率退火到零、再临时改总步数续训。
 
 ### 数据与评测报告
 

@@ -45,7 +45,7 @@
 
 ## P1：冻结 canonical 交互合同
 
-状态：设计已冻结；公共配置、状态机、Teacher/eval 入口、候选选择、SFT 编译和测试已建立，待真实 27B pilot 验收。完整规范见 `EXPERIMENT_PROTOCOL.md` 的 R3.0 章节。
+状态：设计和启动前实现已冻结；公共配置、状态机、Teacher/eval 入口、候选选择、SFT 编译、严格 provenance/恢复校验和边界测试已建立，待 27B smoke/pilot 验收。完整规范见 `EXPERIMENT_PROTOCOL.md` 的 R3.0 章节。
 
 ### 必须对齐的字段
 
@@ -98,12 +98,13 @@ v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实
 
 ### Pilot 设计
 
-1. 从 HotpotQA/NQ 按 source、Hotpot type/level 分层取约 2,000 道唯一问题，每题以 4 个 seed 生成候选，第一轮约 8,000 个 rollout。
+1. 使用冻结 manifest `teacher_pilot_manifest_2k_seed42.jsonl`：HotpotQA/NQ=1,400/600，Hotpot 内按 type/level 分层，排除 5k dev、50k final 同题 hash并按归一化问题去重；每题以 4 个 seed 生成候选，第一轮 8,000 个 rollout。
 2. 使用 post-trained 27B Teacher、v3 原始 Prompt、top-k=3、最多 4 次 search、8192/768/768 token 预算；初始采样使用 `temperature=0.7, top_p=0.9`。
 3. 对所有候选落盘，不只保存成功轨迹。必须保存原始输出、canonical 序列、逐轮 prompt token 数、query、doc IDs/rank/score、截断前后 evidence、答案、终止原因和 validator 的全部失败标签。
 4. 生成环境允许重复/no-progress 后继续，以观察恢复能力；但正式 SFT 严格拒绝含重复、无进展、格式错误、空 query、空结果、生成截断、上下文溢出或最终错答的轨迹。
 5. 禁止删除坏步骤后保留其余部分。优先从同一问题的其他 rollout 选择干净轨迹；没有则重新采样。
 6. HotpotQA 使用两篇 gold supporting documents 做证据覆盖审计；NQ 统计 gold answer/alias 是否出现在模型可见 evidence 中。
+7. 正式 8,000 rollout 前先运行固定 manifest 前 64 题 × 4 rollout 的四卡 smoke；只有候选数/provenance/raw-canonical/检索服务/context overflow 等操作性 gate 通过后才自动进入完整 pilot。
 
 ### 必须报告
 
@@ -158,7 +159,7 @@ v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实
 - Full-parameter SFT + ZeRO-3，GPU 0–3，BF16，gradient checkpointing，`cutoff_len=8192`；若 4 卡 smoke test 显存不足，只调整 micro-batch/ZeRO/offload，不静默把数据截回 4096。
 - 8192 只是允许上限；训练动态 padding 到 batch 最长样本并按长度分桶，不把全部样本预填充到 8192。sample packing 只有在边界和 loss-mask 测试通过后才能启用。
 - 初始保留有效全局 batch 8、lr 1e-5、cosine、warmup 5%、seed 42，避免在换数据的同时修改过多超参。
-- 最多预留 2 epochs；第 1 epoch 后是否继续，由 teacher-forced loss 与 interactive dev 共同决定，不预先强制训满。
+- 调度器从启动时按最多 2 epochs（3,750 optimizer steps）建立，避免在续训时重建 cosine 时间轴；编排器强制在第 1 epoch 的 1,875 step 停止。只有通过 teacher-forced loss 与 interactive dev 联合 gate 并显式传入第二轮批准，才允许从 `checkpoint-1875` 继续，否则第 1 epoch 即为终点。
 
 ### 两层验证
 

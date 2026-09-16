@@ -27,6 +27,7 @@ ACTION_RE = re.compile(
     re.I | re.S,
 )
 INFO_RE = re.compile(r"<information>.*?</information>", re.I | re.S)
+RESERVED_TAG_RE = re.compile(r"</?(?:think|search|answer|information)>", re.I)
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,8 @@ def parse_action(text: str, restore_qwen_think: bool = True) -> ParsedAction:
         raise ValueError("empty_think")
     if not content:
         raise ValueError(f"empty_{kind}")
+    if RESERVED_TAG_RE.search(think) or RESERVED_TAG_RE.search(content):
+        raise ValueError("forbidden_protocol_tag_in_action_content")
     canonical = f"<think>{think}</think><{kind}>{content}</{kind}>"
     return ParsedAction(kind=kind, think=think, content=content, canonical=canonical)
 
@@ -393,6 +396,72 @@ def compile_sft_example(
         "supervised_token_count": sum(label != ignore_index for label in labels),
         "spans": spans,
     }
+
+
+def validate_strict_candidate_record(row: dict[str, Any], config: dict[str, Any]) -> None:
+    """Revalidate a selected Teacher candidate without trusting eligibility flags."""
+    if row.get("protocol_id") != config["protocol_id"]:
+        raise ValueError("candidate_protocol_mismatch")
+    if not row.get("strict_sft_eligible") or row.get("sft_rejection_reasons"):
+        raise ValueError("candidate_not_strict_eligible")
+    raw_generations = row.get("raw_generations")
+    if not isinstance(raw_generations, list) or len(raw_generations) != int(row.get("assistant_generation_count", -1)):
+        raise ValueError("raw_generation_audit_mismatch")
+    events = row.get("events")
+    if not isinstance(events, list) or not events:
+        raise ValueError("missing_candidate_events")
+    retrieval_rounds = row.get("retrieval_rounds")
+    if not isinstance(retrieval_rounds, list):
+        raise ValueError("missing_retrieval_rounds")
+
+    trajectory = ""
+    search_count = 0
+    round_index = 0
+    expect_observation = False
+    saw_answer = False
+    for index, event in enumerate(events):
+        kind = event.get("kind")
+        text = str(event.get("text", ""))
+        if kind == "generated":
+            if expect_observation or saw_answer:
+                raise ValueError("candidate_event_order_error")
+            if not event.get("raw_text") or event.get("canonical_text") != text:
+                raise ValueError("candidate_raw_canonical_missing")
+            action = parse_action(text)
+            trajectory = append_generated_event(trajectory, text)
+            if action.kind == "search":
+                search_count += 1
+                if str(event.get("query", "")).strip() != action.content:
+                    raise ValueError("candidate_query_event_mismatch")
+                expect_observation = True
+            else:
+                saw_answer = True
+                if index != len(events) - 1:
+                    raise ValueError("candidate_answer_not_final")
+        elif kind == "observation":
+            if not expect_observation or saw_answer:
+                raise ValueError("candidate_observation_order_error")
+            if not (text.startswith("<information>") and text.endswith("</information>")):
+                raise ValueError("candidate_observation_format_error")
+            if round_index >= len(retrieval_rounds):
+                raise ValueError("candidate_missing_retrieval_round")
+            retrieval = retrieval_rounds[round_index]
+            previous = events[index - 1]
+            if str(retrieval.get("query", "")).strip() != str(previous.get("query", "")).strip():
+                raise ValueError("candidate_query_information_mismatch")
+            if retrieval.get("documents") != event.get("documents"):
+                raise ValueError("candidate_retrieval_documents_mismatch")
+            trajectory = append_observation_event(trajectory, text)
+            expect_observation = False
+            round_index += 1
+        else:
+            raise ValueError("candidate_unknown_event_kind")
+    if expect_observation or not saw_answer:
+        raise ValueError("candidate_incomplete_trajectory")
+    if search_count != int(row.get("search_action_count", -1)) or round_index != len(retrieval_rounds):
+        raise ValueError("candidate_search_count_mismatch")
+    if trajectory != row.get("canonical_trajectory"):
+        raise ValueError("candidate_canonical_trajectory_mismatch")
 
 
 def document_key(document: dict[str, Any]) -> str:

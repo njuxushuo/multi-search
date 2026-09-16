@@ -40,6 +40,7 @@ def main() -> None:
     parser.add_argument("config")
     parser.add_argument("--resume-from-checkpoint", default=None)
     parser.add_argument("--stop-after-step", type=int, default=None)
+    parser.add_argument("--approve-second-epoch", action="store_true")
     args = parser.parse_args()
     train_config = json.loads(Path(args.config).read_text(encoding="utf-8"))
     os.environ.setdefault("SWANLAB_PROJECT", str(train_config["swanlab_project"]))
@@ -56,7 +57,7 @@ def main() -> None:
     frozen_sft = protocol["sft"]
     frozen_pairs = {
         "learning_rate": frozen_sft["learning_rate"],
-        "num_train_epochs": frozen_sft["initial_epochs"],
+        "num_train_epochs": float(frozen_sft["scheduler_horizon_epochs"]),
         "lr_scheduler_type": frozen_sft["scheduler"],
         "warmup_ratio": frozen_sft["warmup_ratio"],
         "eval_steps": frozen_sft["eval_steps"],
@@ -67,6 +68,7 @@ def main() -> None:
     for key, expected in frozen_pairs.items():
         if train_config.get(key) != expected:
             raise SystemExit(f"R3.0 train config drift for {key}: {train_config.get(key)!r} != {expected!r}")
+    target_epochs = int(train_config["num_train_epochs"])
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     effective_batch = (
         world_size
@@ -77,6 +79,17 @@ def main() -> None:
         raise SystemExit(
             f"R3.0 effective global batch must be {frozen_sft['global_batch_size']}, got {effective_batch}"
         )
+    epoch_one_steps = int(protocol["selection"]["train_trajectories"]) // int(frozen_sft["global_batch_size"])
+    if int(protocol["selection"]["train_trajectories"]) % int(frozen_sft["global_batch_size"]):
+        epoch_one_steps += 1
+    crosses_epoch_gate = args.stop_after_step is None or args.stop_after_step > epoch_one_steps
+    if crosses_epoch_gate and not args.approve_second_epoch:
+        raise SystemExit(
+            f"R3.0 must stop at epoch-1 gate step {epoch_one_steps}; "
+            "continuing epoch 2 requires --approve-second-epoch"
+        )
+    if args.approve_second_epoch and not args.resume_from_checkpoint:
+        raise SystemExit("R3.0 epoch 2 approval requires resume from the epoch-1 checkpoint")
 
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainerCallback, TrainingArguments
@@ -164,6 +177,8 @@ def main() -> None:
         "protocol_config_sha256": file_sha256(train_config["protocol_config"]),
         "dataset_metadata_sha256": file_sha256(train_config["dataset_metadata"]),
         "resume_from_checkpoint": args.resume_from_checkpoint,
+        "target_epochs": target_epochs,
+        "second_epoch_approved": args.approve_second_epoch,
     }
     (output_dir / "run_manifest.json").write_text(
         json.dumps(run_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -174,7 +189,7 @@ def main() -> None:
         per_device_eval_batch_size=train_config["per_device_eval_batch_size"],
         gradient_accumulation_steps=train_config["gradient_accumulation_steps"],
         learning_rate=train_config["learning_rate"],
-        num_train_epochs=train_config["num_train_epochs"],
+        num_train_epochs=target_epochs,
         lr_scheduler_type=train_config["lr_scheduler_type"],
         warmup_ratio=train_config["warmup_ratio"],
         logging_steps=train_config["logging_steps"],
@@ -183,9 +198,7 @@ def main() -> None:
         save_strategy="steps",
         save_steps=train_config["save_steps"],
         save_total_limit=train_config["save_total_limit"],
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        load_best_model_at_end=False,
         bf16=train_config["bf16"],
         gradient_checkpointing=train_config["gradient_checkpointing"],
         deepspeed=train_config["deepspeed"],
@@ -211,6 +224,9 @@ def main() -> None:
     )
     trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
     if args.stop_after_step is None:
+        final_checkpoint = output_dir / f"checkpoint-{trainer.state.global_step}"
+        if not final_checkpoint.is_dir():
+            trainer._save_checkpoint(trainer.model, trial=None)  # noqa: SLF001 - resumable epoch gate
         trainer.save_model(str(output_dir / "final"))
         tokenizer.save_pretrained(str(output_dir / "final"))
         metrics = trainer.evaluate()

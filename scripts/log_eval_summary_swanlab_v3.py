@@ -19,12 +19,16 @@ def main() -> None:
         raise SystemExit("refusing to upload a non-R3.0 summary")
     metrics = {}
     for key, value in summary["overall"].items():
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
             metrics[f"interactive_dev/overall/{key}"] = value
-    for source, values in summary.get("by_source", {}).items():
-        for key, value in values.items():
-            if isinstance(value, (int, float)):
-                metrics[f"interactive_dev/{source}/{key}"] = value
+    for group_name, groups in (
+        ("source", summary.get("by_source", {})),
+        ("search_bucket", summary.get("by_search_bucket", {})),
+    ):
+        for name, values in groups.items():
+            for key, value in values.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    metrics[f"interactive_dev/{group_name}/{name}/{key}"] = value
     import swanlab
     swanlab.init(
         project=args.project,

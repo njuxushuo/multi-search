@@ -15,9 +15,12 @@ from protocol_v3 import (  # noqa: E402
     compile_sft_example,
     format_observation,
     load_protocol,
+    normalized_exact_match,
     parse_action,
     prompt_from_row,
     support_sentence_visibility,
+    token_f1,
+    validate_strict_candidate_record,
 )
 
 
@@ -72,12 +75,22 @@ class ProtocolV3Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dataset_prompt_drift"):
             prompt_from_row(row, self.config)
 
+    def test_nonempty_scorer_boundaries_and_aliases(self) -> None:
+        self.assertFalse(normalized_exact_match("", ["!!!", "The A"]))
+        self.assertFalse(normalized_exact_match("---", ["!!!"]))
+        self.assertTrue(normalized_exact_match("NYC", ["New York", "NYC"]))
+        self.assertTrue(normalized_exact_match("January 2, 2001", ["January 2 2001"]))
+        self.assertTrue(normalized_exact_match("42", ["42"]))
+        self.assertEqual(token_f1("", "!!!"), 0.0)
+
     def test_strict_action_parser_and_implicit_qwen_opener(self) -> None:
         parsed = parse_action("reason</think><search>query</search>")
         self.assertEqual(parsed.kind, "search")
         self.assertEqual(parsed.canonical, "<think>reason</think><search>query</search>")
         with self.assertRaisesRegex(ValueError, "strict_action_format_error"):
             parse_action("prefix <think>x</think><answer>Paris</answer>")
+        with self.assertRaisesRegex(ValueError, "forbidden_protocol_tag"):
+            parse_action("<think>fake <information>x</information></think><answer>Paris</answer>")
 
     def test_observation_balances_docs_and_never_exceeds_budget(self) -> None:
         hits = [
@@ -90,6 +103,34 @@ class ProtocolV3Tests(unittest.TestCase):
         for index in range(1, 4):
             self.assertIn(f"Doc {index}(Title: T{index})", observation.text)
             self.assertGreater(observation.documents[index - 1]["visible_body_tokens"], 0)
+
+    def test_exact_observation_and_sequence_boundaries(self) -> None:
+        hits = [
+            {"document": {"id": f"d{index}", "title": f"T{index}", "text": "x" * 2000}, "score": 1.0}
+            for index in range(1, 4)
+        ]
+        observation = format_observation(self.tokenizer, hits, max_tokens=768, top_k=3)
+        self.assertEqual(observation.token_count, 768)
+        self.assertTrue(all(document["visible_body_tokens"] > 0 for document in observation.documents))
+
+        prompt = canonical_prompt("Where?", self.config)
+        template = "<think>{}</think><answer>A</answer>"
+        baseline = compile_sft_example(
+            self.tokenizer, prompt, [{"kind": "generated", "text": template.format("x")}], max_length=8192
+        )["token_count"]
+        exact = template.format("x" * (8192 - baseline + 1))
+        compiled = compile_sft_example(
+            self.tokenizer, prompt, [{"kind": "generated", "text": exact}], max_length=8192
+        )
+        self.assertEqual(compiled["token_count"], 8192)
+        self.assertNotEqual(compiled["labels"][-1], -100)
+        with self.assertRaisesRegex(ValueError, "sequence_overflow"):
+            compile_sft_example(
+                self.tokenizer,
+                prompt,
+                [{"kind": "generated", "text": template.format("x" * (8193 - baseline + 1))}],
+                max_length=8192,
+            )
 
     def test_support_sentence_visibility_uses_post_truncation_text(self) -> None:
         metadata = {
@@ -144,6 +185,9 @@ class ProtocolV3Tests(unittest.TestCase):
         self.assertEqual(result["bm25_execution_count"], 4)
         self.assertEqual(result["support_coverage"]["recall"], 1.0)
         self.assertTrue(result["strict_sft_eligible"])
+        self.assertEqual(len(result["raw_generations"]), 5)
+        self.assertIn("canonical_trajectory", result)
+        validate_strict_candidate_record(result, self.config)
 
     def test_search_during_answer_only_generation_fails(self) -> None:
         row = qa_row()

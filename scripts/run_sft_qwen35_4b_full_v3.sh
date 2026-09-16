@@ -35,6 +35,10 @@ STOP_ARGS=()
 if [[ -n "${STOP_AFTER_STEP:-}" ]]; then
   STOP_ARGS=(--stop-after-step "$STOP_AFTER_STEP")
 fi
+EPOCH_GATE_ARGS=()
+if [[ "${APPROVE_SECOND_EPOCH:-0}" == "1" ]]; then
+  EPOCH_GATE_ARGS=(--approve-second-epoch)
+fi
 "$PYTHON_BIN" -m torch.distributed.run --standalone --nproc_per_node 4 \
-  scripts/train_sft_v3.py "$TRAIN_CONFIG" "${RESUME_ARGS[@]}" "${STOP_ARGS[@]}" \
+  scripts/train_sft_v3.py "$TRAIN_CONFIG" "${RESUME_ARGS[@]}" "${STOP_ARGS[@]}" "${EPOCH_GATE_ARGS[@]}" \
   2>&1 | tee -a outputs/v3/searchqa_repro_v3_0_0/sft_qwen35_4b_full/run.log

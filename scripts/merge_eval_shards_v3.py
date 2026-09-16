@@ -59,12 +59,19 @@ def main() -> None:
             handle.write(json.dumps(results[eval_id], ensure_ascii=False) + "\n")
     rows = [results[index] for index in sorted(results)]
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_search_bucket: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_source[str(row["data_source"])].append(row)
+        searches = int(row.get("search_action_count", 0))
+        bucket = "zero" if searches == 0 else "one" if searches == 1 else "two" if searches == 2 else "three_plus"
+        by_search_bucket[bucket].append(row)
     summary = {
         **merged_metadata,
         "overall": aggregate(rows),
         "by_source": {source: aggregate(source_rows) for source, source_rows in sorted(by_source.items())},
+        "by_search_bucket": {
+            bucket: aggregate(bucket_rows) for bucket, bucket_rows in sorted(by_search_bucket.items())
+        },
     }
     summary_path = output.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -10,7 +10,7 @@
   "per_device_eval_batch_size": 1,
   "gradient_accumulation_steps": 2,
   "learning_rate": 1e-5,
-  "num_train_epochs": 1.0,
+  "num_train_epochs": 2.0,
   "lr_scheduler_type": "cosine",
   "warmup_ratio": 0.05,
   "logging_steps": 1,

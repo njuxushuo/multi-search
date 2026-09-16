@@ -1,6 +1,6 @@
 # 项目当前状态
 
-更新日期：2026-09-16
+更新日期：2026-09-17
 
 本文档只记录“现在什么是真的”。已冻结的评测口径见 `EXPERIMENT_PROTOCOL.md`，正式数字见 `RESULTS.md`，下一步执行顺序见 `ROADMAP.md`。Git 历史保留了旧的日报和初始化记录，不再另行维护容易过时的时间线文档。
 
@@ -10,7 +10,7 @@
 
 已确定的下一轮模型选择：Teacher 继续使用官方 post-trained `Qwen3.5-27B`；Student 不再从 `Qwen3.5-4B-Base` 启动，改为从官方 post-trained `Qwen3.5-4B` 启动 Full SFT。官方模型名没有 `-Instruct`，文档中的 instruction Student 均指这个 post-trained checkpoint。不再进行 Base/post-trained Student 初始化对照。
 
-新 Teacher/SFT 主线的唯一总版本为 **R3.0**（机器 ID `searchqa_repro_v3_0_0`），详细规范见 `EXPERIMENT_PROTOCOL.md`：使用 parquet 原始 Prompt、连续累计轨迹、BM25 top-k=3、最多 4 次 search + 1 次 answer-only、总上下文/SFT cutoff 8192、单次生成 768、单次 top-3 observation 768。公共配置、状态机、Teacher/eval 入口、候选分层选择和精确 SFT loss-mask 编译已实现并完成 CPU/真实 tokenizer smoke test；真实 27B pilot 尚未启动，不能误记为实验已完成。
+新 Teacher/SFT 主线的唯一总版本为 **R3.0**（机器 ID `searchqa_repro_v3_0_0`），详细规范见 `EXPERIMENT_PROTOCOL.md`：使用 parquet 原始 Prompt、连续累计轨迹、BM25 top-k=3、最多 4 次 search + 1 次 answer-only、总上下文/SFT cutoff 8192、单次生成 768、单次 top-3 observation 768。公共配置、状态机、Teacher/eval 入口、候选分层选择、raw/canonical 双轨迹审计、严格恢复校验和精确 SFT loss-mask 编译已实现并完成 CPU/真实 tokenizer smoke test；真实 27B smoke/pilot 尚未启动，不能误记为实验已完成。
 
 ## 已完成与当前运行项
 
@@ -19,6 +19,7 @@
 | Wikipedia 2018 | 已完成 | `data/corpus/wiki-18.jsonl`，21,015,324 篇文档 |
 | Lucene BM25 | 已完成 | `data/index/bm25`，HTTP 检索服务支持 top-k=3 |
 | 27B Teacher 权重 | 已完成 | `models/Qwen3.5-27B`，11 个 safetensors 分片已校验 |
+| R3.0 Teacher pilot manifest | 已完成 | 2,000 道唯一题，HotpotQA/NQ=1,400/600，dev/final 同题重叠为 0；SHA-256 `c6ad15a...e979d71` |
 | 第一版 Teacher 轨迹 | 已完成 | 4 个 shard 合并后 18,453 条严格有效轨迹；合并时拒绝 1,115 条、去重 168 条 |
 | 第一版 SFT 数据 | 已完成 | 15,000 train + 1,000 teacher-forced eval，evidence 不计 loss |
 | LoRA SFT | 已完成 | 正确 mask 版 1 epoch / 1,875 steps；后续不再作为必经阶段 |
@@ -84,6 +85,7 @@ Loss 口径：只监督 assistant 生成的 `<think>`、`<search>` 和 `<answer>
 | v0 评测 | `outputs/eval/qwen35_4b_{base,lora,full}_50k_docnovelty.*` |
 | v1 评测 | `outputs/eval/v1/qwen35_4b_{base,lora,full}_v1_neutral_50k.*` |
 | 后训练 4B 运行中分片 | `outputs/eval/v1/qwen35_4b_posttrained_v1_neutral_50k.shard*.jsonl` |
+| R3.0 Teacher pilot manifest | `data/processed/searchqa_repro_v3_0_0/teacher_pilot_manifest_2k_seed42.jsonl` |
 | SwanLab 项目 | `search-r1` |
 
 ## 文档维护规则

@@ -100,12 +100,46 @@ def main() -> None:
         "question_overlap": 0,
     }
 
+    pilot_path = ROOT / config["data"]["teacher_pilot_manifest"]
+    pilot_metadata_path = pilot_path.with_suffix(".metadata.json")
+    pilot_hash, pilot_rows = manifest_hash(pilot_path)
+    pilot_metadata = json.loads(pilot_metadata_path.read_text(encoding="utf-8"))
+    pilot_question_hashes = [str(row.get("question_sha256", "")) for row in pilot_rows]
+    excluded_hashes = {
+        hashlib.sha256(normalize_answer(row["question"]).encode("utf-8")).hexdigest()
+        for row in final_rows + full_rows
+    }
+    expected_pilot = int(config["teacher_sampling"]["pilot_unique_questions"])
+    source_counts = Counter(str(row["data_source"]) for row in pilot_rows)
+    expected_sources = {
+        "hotpotqa": round(expected_pilot * float(config["teacher_sampling"]["pilot_hotpotqa_fraction"])),
+        "nq": round(expected_pilot * float(config["teacher_sampling"]["pilot_nq_fraction"])),
+    }
+    expected_sources["hotpotqa"] += expected_pilot - sum(expected_sources.values())
+    if len(pilot_rows) != expected_pilot or len(set(pilot_question_hashes)) != expected_pilot:
+        raise SystemExit("Teacher pilot manifest count/uniqueness mismatch")
+    if set(pilot_question_hashes) & excluded_hashes:
+        raise SystemExit("Teacher pilot manifest leaks into interactive dev or final test")
+    if dict(source_counts) != expected_sources:
+        raise SystemExit(f"Teacher pilot source distribution mismatch: {dict(source_counts)}")
+    if pilot_metadata.get("manifest_sha256") != file_sha256(pilot_path):
+        raise SystemExit("Teacher pilot manifest metadata checksum mismatch")
+    if pilot_metadata.get("protocol_config_sha256") != file_sha256(args.protocol_config):
+        raise SystemExit("Teacher pilot manifest protocol checksum mismatch")
+    report["checks"]["teacher_pilot_manifest"] = {
+        "count": len(pilot_rows),
+        "source_counts": dict(source_counts),
+        "manifest_sha256": pilot_hash,
+        "dev_final_overlap": 0,
+        "unique_normalized_questions": len(set(pilot_question_hashes)),
+    }
+
     train_config = json.loads((ROOT / "configs/sft_qwen35_4b_full_v3.json").read_text(encoding="utf-8"))
     frozen_sft = config["sft"]
     expected = {
         "model_name_or_path": config["models"]["student_initial"],
         "learning_rate": frozen_sft["learning_rate"],
-        "num_train_epochs": float(frozen_sft["initial_epochs"]),
+        "num_train_epochs": float(frozen_sft["scheduler_horizon_epochs"]),
         "warmup_ratio": frozen_sft["warmup_ratio"],
         "eval_steps": frozen_sft["eval_steps"],
         "seed": frozen_sft["seed"],

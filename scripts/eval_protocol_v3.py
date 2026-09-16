@@ -31,6 +31,7 @@ def initial_state(row: dict[str, Any], initial_prompt: str, candidate_id: str) -
         "initial_prompt": initial_prompt,
         "trajectory": "",
         "events": [],
+        "raw_generations": [],
         "queries": [],
         "query_cache": {},
         "seen_doc_keys": set(),
@@ -68,8 +69,11 @@ def _append_event(state: dict[str, Any], kind: str, text: str, **metadata: Any) 
         state["trajectory"] = append_observation_event(state["trajectory"], text)
 
 
-def _set_answer(state: dict[str, Any], action: Any) -> None:
-    _append_event(state, "generated", action.canonical, action="answer")
+def _set_answer(state: dict[str, Any], action: Any, raw_text: str) -> None:
+    _append_event(
+        state, "generated", action.canonical, action="answer",
+        raw_text=raw_text, canonical_text=action.canonical,
+    )
     state["prediction"] = action.content
     state["done"] = True
     state["termination_reason"] = "answer_after_search_budget" if state["final_only"] else "answer"
@@ -87,6 +91,11 @@ def apply_generation(
     if state["done"]:
         raise ValueError("cannot apply generation to completed state")
     state["assistant_generation_count"] += 1
+    state["raw_generations"].append({
+        "generation_index": state["assistant_generation_count"] - 1,
+        "text": str(generated),
+        "finish_reason": finish_reason,
+    })
     if finish_reason == "length":
         state["generation_truncated"] = True
         state["format_compliant"] = False
@@ -105,7 +114,7 @@ def apply_generation(
         return
 
     if action.kind == "answer":
-        _set_answer(state, action)
+        _set_answer(state, action, str(generated))
         return
     if state["final_only"]:
         _reason(state, "search_after_search_budget")
@@ -120,7 +129,10 @@ def apply_generation(
         _reason(state, "empty_search")
         state["done"], state["termination_reason"] = True, "empty_search"
         return
-    _append_event(state, "generated", action.canonical, action="search", query=query)
+    _append_event(
+        state, "generated", action.canonical, action="search", query=query,
+        raw_text=str(generated), canonical_text=action.canonical,
+    )
     state["queries"].append(query)
 
     repeated = query_key in state["query_cache"]
@@ -292,9 +304,17 @@ def build_result(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any
         "data_source": source,
         "metadata": row.get("metadata"),
         "initial_prompt": state["initial_prompt"],
-        "raw_trajectory": state["trajectory"],
+        "raw_trajectory": "\n\n".join(item["text"] for item in state["raw_generations"]),
+        "raw_generations": state["raw_generations"],
+        "canonical_trajectory": state["trajectory"],
         "events": state["events"],
         "prediction": state["prediction"],
+        "answer_present": bool(state["prediction"]),
+        "format_compliant": bool(state["format_compliant"]),
+        "generation_truncated": bool(state["generation_truncated"]),
+        "sequence_overflow": bool(state["sequence_overflow"]),
+        "has_repeated_query": state["repeated_query_count"] > 0,
+        "has_no_progress": state["no_progress_search_count"] > 0,
         "exact_match": int(normalized_exact_match(state["prediction"], answers)),
         "f1": max((token_f1(state["prediction"], answer) for answer in answers), default=0.0),
         "answer_grounded_in_visible_evidence": answer_grounded,
@@ -305,6 +325,9 @@ def build_result(state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any
         "bm25_execution_count": state["bm25_execution_count"],
         "unique_query_count": len(set(normalize_query(query) for query in state["queries"])),
         "unique_document_count": len(state["seen_doc_keys"]),
+        "retrieved_document_count": sum(
+            len(round_item.get("documents") or []) for round_item in state["retrieval_rounds"]
+        ),
         "progressive_search_count": state["progressive_search_count"],
         "no_progress_search_count": state["no_progress_search_count"],
         "repeated_query_count": state["repeated_query_count"],

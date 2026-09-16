@@ -31,12 +31,25 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     count = len(rows)
     mean = lambda key: sum(float(row.get(key, 0)) for row in rows) / count
     rate = lambda key: sum(bool(row.get(key)) for row in rows) / count
+    correct = [row for row in rows if row.get("exact_match")]
+    wrong = [row for row in rows if not row.get("exact_match")]
+    subset_mean = lambda subset, key: (
+        sum(float(row.get(key, 0)) for row in subset) / len(subset) if subset else None
+    )
+    support_rows = [
+        row for row in rows
+        if (row.get("support_coverage") or {}).get("recall") is not None
+    ]
     return {
         "examples": count,
         "em": mean("exact_match"),
         "f1": mean("f1"),
         "mean_search_actions": mean("search_action_count"),
+        "mean_search_actions_correct": subset_mean(correct, "search_action_count"),
+        "mean_search_actions_wrong": subset_mean(wrong, "search_action_count"),
         "mean_bm25_executions": mean("bm25_execution_count"),
+        "mean_bm25_executions_correct": subset_mean(correct, "bm25_execution_count"),
+        "mean_bm25_executions_wrong": subset_mean(wrong, "bm25_execution_count"),
         "mean_unique_queries": mean("unique_query_count"),
         "mean_unique_documents": mean("unique_document_count"),
         "mean_progressive_searches": mean("progressive_search_count"),
@@ -48,6 +61,14 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "search_limit_rate": sum(row.get("termination_reason") == "search_limit" for row in rows) / count,
         "context_overflow_rate": sum(row.get("termination_reason") == "context_overflow" for row in rows) / count,
         "generation_truncated_rate": sum(row.get("termination_reason") == "generation_truncated" for row in rows) / count,
+        "hotpot_support_recall": (
+            sum(float(row["support_coverage"]["recall"]) for row in support_rows) / len(support_rows)
+            if support_rows else None
+        ),
+        "hotpot_full_support_rate": (
+            sum(float(row["support_coverage"]["recall"]) == 1.0 for row in support_rows) / len(support_rows)
+            if support_rows else None
+        ),
         "termination_reasons": dict(Counter(str(row.get("termination_reason")) for row in rows)),
     }
 
@@ -257,12 +278,19 @@ def main() -> None:
     if completed != expected:
         raise SystemExit(f"incomplete shard: missing={sorted(expected - completed)[:10]}")
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_search_bucket: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         by_source[str(result["data_source"])].append(result)
+        searches = int(result.get("search_action_count", 0))
+        search_bucket = "zero" if searches == 0 else "one" if searches == 1 else "two" if searches == 2 else "three_plus"
+        by_search_bucket[search_bucket].append(result)
     summary = {
         **metadata,
         "overall": aggregate(results),
         "by_source": {source: aggregate(source_rows) for source, source_rows in sorted(by_source.items())},
+        "by_search_bucket": {
+            bucket: aggregate(bucket_rows) for bucket, bucket_rows in sorted(by_search_bucket.items())
+        },
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(output), "summary": str(summary_path), **summary["overall"]}, ensure_ascii=False))
