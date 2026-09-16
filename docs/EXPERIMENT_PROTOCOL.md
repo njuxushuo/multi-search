@@ -21,6 +21,17 @@
 
 结果应先写入 `RESULTS.md`，原始日志和轨迹保存在项目外部或约定目录，并在表格中留下路径。
 
+## 协议版本注册表
+
+| 对话简称 | 机器 ID | 含义 |
+|---|---|---|
+| v0 | `qwen35_search_r1_v4_dp_doc_novelty` | 第一版历史评测；重复 query 立即终止、8 次搜索、latest exchange |
+| v1 | `qwen35_search_eval_v1_neutral_repeat_final_answer` | 历史修正版；重复 query 中性恢复、8 次搜索加回答轮、latest exchange |
+| v2 | 尚未运行 | 只对 v1 增加累计历史/token-budget 裁剪的预定消融 |
+| **R3.0** | **`searchqa_repro_v3_0_0`** | 下一轮完整复现实验：27B Teacher 数据、筛选、4B post-trained Full SFT、dev/final eval 的统一方案 |
+
+后续对话中单独提到“R3.0”，即指本文件整个 R3.0 章节以及机器配置 `configs/protocols/searchqa_repro_v3_0_0.json`，不只是评测状态机。Prompt、chat template 语义、top-k、observation 格式、轮数/token budget、筛选配额、loss mask、模型初始化和主指标中任何一项发生语义变化，都必须分配新版本，不能仍称 R3.0。
+
 ## v0 冻结评测协议（2026-09-15）
 
 ### 协议身份与用途
@@ -309,11 +320,11 @@ v2 必须新增逐样本字段：`prompt_token_count_by_round`、`evidence_token
 - 只进行 0 或 1 次搜索且生成路径不受上下文变化影响的样本可以复用，但合并时同样记录 origin；若资源允许，正式主结果优先全量重跑。
 - v2 结果重点比较多跳数据集 EM/F1、2+ 搜索样本 EM、正确样本平均搜索次数、上下文截断率和 evidence token 使用量。
 
-## v3 Search-R1-aligned canonical 协议（设计冻结，待实现）
+## R3.0 Search-R1-aligned canonical 协议（设计冻结，实现待 pilot）
 
 ### 目标与证据优先级
 
-v3 用于下一轮 27B Teacher 蒸馏、4B post-trained Full SFT 和同协议端到端评测。它不是 v1/v2 的覆盖更新，而是独立版本；旧结果和输出保持只读。所有无法从简历直接确认的细节按以下顺序确定：
+R3.0 用于下一轮 27B Teacher 蒸馏、4B post-trained Full SFT 和同协议端到端评测。它不是 v1/v2 的覆盖更新，而是独立版本；旧结果和输出保持只读。所有无法从简历直接确认的细节按以下顺序确定：
 
 1. 简历明确描述；
 2. 本仓库固定数据中的原始字段；
@@ -336,7 +347,9 @@ v3 用于下一轮 27B Teacher 蒸馏、4B post-trained Full SFT 和同协议端
 | teacher-forced eval | 1,000 条，与 train 按 question ID 隔离 |
 | 候补审计池 | 目标至少 2,000 条 |
 | SFT | 从 post-trained 4B 独立开始的 Full SFT；不把 LoRA 作为必经步骤 |
-| RL | v3 SFT 通过端到端准入门槛前不启动 |
+| RL | R3.0 SFT 通过端到端准入门槛前不启动 |
+
+机器可读单一真源为 `configs/protocols/searchqa_repro_v3_0_0.json`，当前 SHA-256 为 `a0643e884b497d0aa2d67218515dad9bce83968f708a873e8dffe9f19fa19133`。代码、轨迹、数据 manifest、checkpoint 和评测 summary 都必须写入同一个 `protocol_id` 及配置 SHA-256；路径命名统一使用 `searchqa_repro_v3_0_0`。任何配置改动都必须同步更新版本和校验和。
 
 ### Canonical Prompt
 
@@ -346,7 +359,7 @@ Teacher 生成、SFT 和端到端评测都必须从 parquet 的 `prompt[0].conte
 Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information. After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. You can search as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}
 ```
 
-为了复现 token 序列，第一版保留原文中的 `as your want`，不做文案润色。不增加额外 system prompt，也不在每次检索后追加 `Use the evidence above`、`final allowed search` 等普通提示。
+代码块中的问题行末还包含一个固定 LF（`\n`），机器配置必须保留。为了复现 token 序列，第一版保留原文中的 `as your want`，不做文案润色。不增加额外 system prompt，也不在每次检索后追加 `Use the evidence above`、`final allowed search` 等普通提示。
 
 ### 轨迹序列化与工具返回
 
@@ -440,11 +453,11 @@ HotpotQA 使用数据集直接提供的两篇 supporting-document 标题和 supp
 - A 级：答案正确、行为干净、两篇 gold supporting documents 都进入模型可见上下文；在语料能够对齐 supporting sentence 时，还需确认关键 supporting sentence 未被 observation 截断；后续搜索产生新证据；
 - B 级：答案和行为正确，但只覆盖一篇 gold supporting document，另一跳可能依赖参数知识或非 gold 文档。
 
-正式 15k 优先使用 A 级；B 级只作有明确上限的候补并单列报告。一次搜索若在 top-3 中同时覆盖两篇 gold 文档，属于真实高效轨迹，不能为增加轮数而删除。NQ 不强制多轮，但至少要求一次有效检索，并统计 gold answer/alias 是否出现在可见 evidence 中。
+正式选集中的 HotpotQA 轨迹至少 85% 为 A 级、B 级最多 15%，C 级不进入；若 A 级不足则继续扩采，不能静默放宽。一次搜索若在 top-3 中同时覆盖两篇 gold 文档，属于真实高效轨迹，不能为增加轮数而删除。NQ 不强制多轮，但至少要求一次有效检索；最终 NQ 中至少 90% 要能在裁剪后的可见 evidence 中找到 normalized gold answer/alias，其余未直接字符串对齐的轨迹单列审计。
 
 同一问题的多条硬性合格轨迹按以下词典序选择：完整证据覆盖、每轮有新证据、无截断、在同等覆盖下更少的无效成本和 token。不能用“更短”压过证据更完整的轨迹。
 
-最终候选池目标不少于 18,000 条；确定性、按 question ID 分层选择 15,000 train + 1,000 teacher-forced eval，保留至少 2,000 条候补。初始组成目标为 HotpotQA/NQ 约 70%/30%，HotpotQA 内尽量保持原始 bridge/comparison 和 easy/medium/hard 分布；2+ 搜索轨迹目标至少 60%，3+ 目标约 20%–30%，但不得以冗余查询人工填长。
+最终候选池目标不少于 18,000 条；确定性、按 question ID 分层选择 15,000 train + 1,000 teacher-forced eval，保留至少 2,000 条候补。组成冻结为 HotpotQA/NQ 约 70%/30%，搜索桶目标为 1 次约 40%、2 次约 35%、3–4 次约 25%，并与上述证据等级做交叉分层；HotpotQA 内还要尽量保持原始 bridge/comparison 和 easy/medium/hard 分布。所有较长轨迹必须有证据新增，不得以冗余查询人工填长。
 
 ### SFT 表示与 Loss
 
@@ -460,6 +473,17 @@ HotpotQA 使用数据集直接提供的两篇 supporting-document 标题和 supp
 | padding | mask (`-100`) |
 
 LLaMAFactory 的 `train_on_prompt=false` 不能单独证明 assistant 内部 information 已正确 mask；正式训练前必须对 tokenizer 后的 `input_ids/labels` 做自动断言和可读抽查。
+
+Qwen3.5 官方 chat template 会在第一轮 assistant generation prefix 末尾自动加入 `<think>\n`。R3.0 保存的 canonical 首轮事件仍保留完整 `<think>...</think>`，但 runtime/SFT token 序列复用模板提供的第一个 opener，只监督首轮 think 正文和闭合标签；后续轮的完整 `<think>` 标签均由模型生成并参与 loss。实现必须断言不会产生 `<think>\n<think>` 双 opener。
+
+### 独立 interactive dev
+
+固定 50k final test 几乎占满 test parquet，剩余样本不足以构造 5k dev。因此 R3.0 在 Teacher 采样前从 train parquet 固定保留 5,000 题，并从所有 Teacher/SFT 候选中排除：
+
+- 完整 dev：`data/processed/search_eval/searchqa_v3_interactive_dev_5k_seed43_train_holdout.jsonl`，HotpotQA 3,500 + NQ 1,500，SHA-256（canonical rows）`469ab57e52376abae3f7f17c4c9e016e1dbc8fb68eebf5a7e3bc1e61e4308341`；
+- 快速 dev：上述固定集合的前 1,000 题，HotpotQA 707 + NQ 293，SHA-256（canonical rows）`0e5e5586f248e10a0f10184f19ff4d1b9a6cb8a6528480dc80cdf284fdc714f4`。
+
+每 500 optimizer steps 暂停训练并释放 GPU，用四卡评测 quick dev，结果上传 SwanLab 后从同一 checkpoint 恢复；epoch 末/最终候选在完整 5k dev 上评测。这样不会在 ZeRO-3 训练仍占显存时并发启动 vLLM，也不会改变完整训练的 scheduler 总步数。
 
 ### 数据与评测报告
 

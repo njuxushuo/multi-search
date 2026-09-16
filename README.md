@@ -6,8 +6,10 @@
 
 - [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)：当前真实状态、已完成内容、已知问题和产物路径。
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：接下来的唯一执行计划和验收门槛。
-- [`docs/EXPERIMENT_PROTOCOL.md`](docs/EXPERIMENT_PROTOCOL.md)：已冻结的 v0/v1 评测协议与指标口径。
+- [`docs/EXPERIMENT_PROTOCOL.md`](docs/EXPERIMENT_PROTOCOL.md)：历史 v0/v1/v2 口径与已冻结的 R3.0 完整复现实验协议。
 - [`docs/RESULTS.md`](docs/RESULTS.md)：已完成实验的正式结果，不记录运行中指标。
+
+下一轮统一复现实验版本为 **R3.0**（机器 ID `searchqa_repro_v3_0_0`）。后续提到 R3.0，即指 `configs/protocols/searchqa_repro_v3_0_0.json` 与实验协议中冻结的完整 Teacher→筛选→Full SFT→评测方案。
 
 ## 环境入口
 

@@ -6,13 +6,15 @@
 
 下一阶段不启动 GRPO/DAPO。现有 Full SFT 已证明 SFT 方向有效，但冷启动数据中 72.05% 的样本只搜索一次，且 Teacher/SFT/评测的 Prompt 和上下文策略并未完全对齐。在这种初始策略上直接惩罚检索次数，很可能加剧过早回答，而不是学到更高效的多跳搜索。
 
+本路线的统一版本简称为 **R3.0**，机器 ID 为 `searchqa_repro_v3_0_0`；版本内所有阶段共享同一机器配置与语义。
+
 模型起点已确定：27B Teacher 继续使用官方 post-trained `Qwen3.5-27B`；新 Full SFT Student 使用官方 post-trained `Qwen3.5-4B`（即本项目所说的 instruction-capable 模型），不再使用 `Qwen3.5-4B-Base`，也不进行两种初始化的训练对照。主要提升必须相对这个未训练的 post-trained 4B baseline 计算，以保证公平。
 
 近期唯一主线是：
 
 ```text
 收尾现有基线
-    → 实现并核验已冻结的 v3 Search-R1-aligned 合同
+    → 实现并核验已冻结的 R3.0 Search-R1-aligned 合同
     → 修正 scorer 并建立无偏端到端 dev
     → Teacher 恢复采样 pilot
     → 决定局部补采还是全量重采
@@ -43,7 +45,7 @@
 
 ## P1：冻结 canonical 交互合同
 
-状态：设计已冻结、代码待实现；完整规范见 `EXPERIMENT_PROTOCOL.md` 的 v3 章节。这是新 Teacher 采样、SFT 和评测的共同依赖。
+状态：设计已冻结；公共配置、状态机、Teacher/eval 入口、候选选择、SFT 编译和测试已建立，待真实 27B pilot 验收。完整规范见 `EXPERIMENT_PROTOCOL.md` 的 R3.0 章节。
 
 ### 必须对齐的字段
 
@@ -88,7 +90,7 @@ v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实
 
 - 为每道题保留稳定 question ID、source、gold answers 和 split。
 - 使用 ID/hash 去重，检查 train、teacher-forced eval、interactive dev 和固定 50k final test 无泄漏。
-- 固定 50k test 不再用于频繁调参；建立 2k–5k 的无偏 interactive dev，从未用于 SFT 的数据中确定性抽样并保留 gold。
+- 固定 50k test 不再用于频繁调参。从 train parquet 预留固定 5k interactive dev（HotpotQA/NQ=3500/1500），Teacher 采样前即按 source row 排除；其中固定前 1k 用于训练中快速检查，完整 5k 用于 epoch/checkpoint 决策。
 
 ## P3：Teacher 恢复采样 pilot
 
@@ -131,7 +133,7 @@ v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实
 5. chat template 只渲染 canonical 初始 prompt；环境 `<information>` 直接插入连续轨迹，但其 label 全部为 `-100`。
 6. Loss 监督该轨迹内所有由 Teacher 生成的 `<think>`、`<search>` 和 `<answer>`，屏蔽 prompt、全部 `<information>` 和 padding。使用自定义预处理/collator，不能只依赖 `train_on_prompt=false`。
 7. Student tokenizer 后序列必须 `<=8192`；任何超限候选以 `sequence_overflow` 拒绝，禁止静默截断目标、证据或标签。
-8. 初始选集目标约 HotpotQA/NQ=70%/30%；HotpotQA 优先双 supporting-document 覆盖，保持原始 type/level 分布。一次搜索若同时覆盖双支持文档可以保留。
+8. 选集按 source × search bucket × evidence quality 交叉分层：HotpotQA/NQ≈70%/30%，1/2/3–4 次≈40%/35%/25%；HotpotQA A 级至少 85%、B 级最多 15%、C 级为 0，NQ 可见 evidence grounding 至少 90%。不足时继续扩采而不是放宽；HotpotQA 同时保持原始 type/level 分布。
 
 ### 数据 QA
 
@@ -161,7 +163,7 @@ v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实
 ### 两层验证
 
 1. **Teacher-forced eval**：固定 1,000 条，每 250 optimizer steps 计算 eval loss，同步 save checkpoint；记录监督 token 数，确保 loss 口径不变。
-2. **Interactive dev**：真实调用 BM25 进行多轮 rollout。每 500 steps 在固定的约 1,000 题快速子集上评估；每个 epoch 结束和候选最佳 checkpoint 在完整 2k–5k dev 上评估。
+2. **Interactive dev**：真实调用 BM25 进行多轮 rollout。每 500 steps 保存并暂停训练、释放 GPU，在固定 1,000 题快速子集上以四卡评估并上传 SwanLab，然后从同一 checkpoint 恢复；每个 epoch 结束和候选最佳 checkpoint 在完整 5,000 题 dev 上评估。
 
 Interactive dev 必须上传 SwanLab：EM、F1、answer rate、format compliance、actual searches、search attempts、progressive/redundant searches、unique docs、repeat rate、search-limit rate、context truncation rate，并按 source 和 1/2/3+ 搜索桶拆分。
 

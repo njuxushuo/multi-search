@@ -10,7 +10,7 @@
 
 已确定的下一轮模型选择：Teacher 继续使用官方 post-trained `Qwen3.5-27B`；Student 不再从 `Qwen3.5-4B-Base` 启动，改为从官方 post-trained `Qwen3.5-4B` 启动 Full SFT。官方模型名没有 `-Instruct`，文档中的 instruction Student 均指这个 post-trained checkpoint。不再进行 Base/post-trained Student 初始化对照。
 
-新 Teacher/SFT 主线的设计协议已冻结为 `v3 Search-R1-aligned`，详细规范见 `EXPERIMENT_PROTOCOL.md`：使用 parquet 原始 Prompt、连续累计轨迹、BM25 top-k=3、最多 4 次 search + 1 次 answer-only、总上下文/SFT cutoff 8192、单次生成 768、单次 top-3 observation 768。当前状态是“设计冻结、代码和 pilot 待实现”，不能误记为已经完成。
+新 Teacher/SFT 主线的唯一总版本为 **R3.0**（机器 ID `searchqa_repro_v3_0_0`），详细规范见 `EXPERIMENT_PROTOCOL.md`：使用 parquet 原始 Prompt、连续累计轨迹、BM25 top-k=3、最多 4 次 search + 1 次 answer-only、总上下文/SFT cutoff 8192、单次生成 768、单次 top-3 observation 768。公共配置、状态机、Teacher/eval 入口、候选分层选择和精确 SFT loss-mask 编译已实现并完成 CPU/真实 tokenizer smoke test；真实 27B pilot 尚未启动，不能误记为实验已完成。
 
 ## 已完成与当前运行项
 
