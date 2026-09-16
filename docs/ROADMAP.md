@@ -4,20 +4,24 @@
 
 复现 Qwen3.5-27B Teacher → Qwen3.5-4B Student 的多轮 BM25 检索问答链路。正式结果必须包含 15,000 条真实搜索轨迹、独立 1,000 条 SFT eval，以及固定 50k 跨数据集测试子集。核心指标为 EM、F1、平均检索次数和无效工具调用率；所有实验保存配置、代码版本、随机种子、日志和 checkpoint。
 
-## 近期实验计划（2026-09-15，SFT 优先）
+## 近期实验计划（2026-09-16，SFT 优先）
 
 本节是近期执行顺序；下方阶段 6–9 的 RL 工作暂不启动。当前首先把评测口径和 SFT 数据做好，避免同时修改多个变量。
 
 ### P0：冻结 v0 四模型基线
 
+状态：三个本地 4B 模型的 v0/v1 已完成；27B Teacher 结果仍待从其他服务器回传。
+
 1. 按 `docs/EXPERIMENT_PROTOCOL.md` 中的 v0 协议保存 Base、LoRA、Full SFT、27B Teacher 的逐条输出、summary、日志和实际配置。
-2. 当前 Base、LoRA 已完成；继续完成 Full SFT 和自动排队的 Teacher。
+2. Base、LoRA、Full SFT 已完成；Teacher 不在本机自动排队，由其他服务器完成后回传。
 3. v0 文件只读保留，不因后续修复而覆盖。
 4. 正式结果同时报告各数据集、50k micro average，并补算七数据集等权 macro average；搜索指标至少区分成功搜索、搜索尝试、返回文档数和去重文档数。
 
 验收：四模型恰好覆盖同一固定 manifest 的 50,000 个 eval ID，所有 shard 完整合并，协议 metadata 和文件路径可追溯。
 
 ### P1：修正重复搜索提前终止并做局部续测
+
+状态：已完成 Base、LoRA、Full SFT 的 50k v1 局部续测、严格合并和结果记录；下一步补充 Instruct 基线并做失败类型审计。
 
 1. 保持 v0 的模型、manifest、Prompt、BM25、top-k=3、最大 8 轮和解码参数不变。
 2. 归一化查询完全重复时不再立即终止：不重复请求 BM25，返回固定的中性 no-progress observation（不使用“错误/重复”等措辞），并消耗一次搜索尝试预算。

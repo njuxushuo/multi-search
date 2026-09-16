@@ -26,7 +26,7 @@
 
 项目文档中的 **v0** 指当前正在使用的旧终止规则评测。代码写入结果 metadata 的内部协议名为 `qwen35_search_r1_v4_dp_doc_novelty`。v0 用于保存 Base、LoRA、Full SFT、27B Teacher 的第一版可比基线；后续修正重复搜索处理时必须产生新协议版本，不能覆盖 v0 文件。
 
-截至 2026-09-15，Base 和 LoRA 已完成，Full SFT 正在运行。Teacher 已改在其他服务器评测，本机顺序启动脚本默认不再启动 Teacher。Qwen3.5-4B-Instruct 不属于 v0 四模型集合，将在修正终止规则后的 v1 中加入。
+截至 2026-09-16，Base、LoRA 和 Full SFT 的 v0/v1 本地评测均已完成并严格合并。Teacher 已改在其他服务器评测，本机顺序启动脚本不再启动 Teacher。Qwen3.5-4B-Instruct 不属于 v0 四模型集合，计划直接使用修正后的 v1 协议评测。
 
 ### 代码与运行环境
 
@@ -171,6 +171,17 @@ This is the final allowed search; do not search again. Output the required answe
 4. 合并多余空白。
 
 EM 为预测与任一 `golden_answers` 归一化后完全相同。F1 为预测与各 gold 的 token-level F1 最大值。当前 summary 的总体 EM/F1 是按 50,000 条样本直接计算的 **micro average**；同时输出每个数据集结果，但尚未输出七数据集等权 macro average。
+
+#### 2026-09-16 非空评分修正
+
+评测完成后确认旧实现存在空字符串边界问题：空 prediction 会与归一化后为空的参考别名（例如 `!!!`、`---`、`The A`）相等，并被误记为 EM=1；`token_f1()` 也会把两侧空 token 列表记为 1。正式报告增加以下约束：
+
+1. prediction 归一化后为空时，EM=0、F1=0；
+2. 单个 gold 归一化后为空时，不参与该题的 EM/F1 最大值计算；
+3. 若所有 gold 均归一化为空，该题不能因空预测获得正确分；
+4. 已生成的原始 JSONL 和 summary 保持不变，通过逐条预测离线重算得到正式数字。
+
+该修正同时应用于 v0/v1，属于确定性的评分审计，不改变任何模型生成、状态机、检索行为或样本身份。`docs/RESULTS.md` 记录原始 summary 与修正值；以后新 evaluator 应在在线评分阶段直接执行上述非空检查。
 
 置信区间口径：EM 使用 95% Wilson interval；F1 和平均成功搜索次数使用正态近似的 95% mean CI。
 
