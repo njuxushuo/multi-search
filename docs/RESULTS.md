@@ -5,17 +5,25 @@
 - **F1**：预测答案与标准答案的 token-level F1；空预测或归一化后为空的参考别名不能获得分数。
 - **平均成功检索次数**：每条问题轨迹中成功返回非空结果的 BM25 调用平均次数。
 - **平均搜索尝试次数**：模型提出的搜索动作平均次数，包含重复查询和空查询。
-- **无效调用率**：格式错误、参数缺失或检索失败的工具调用比例。
+- **终止/无效行为**：格式错误、空查询、重复查询、无新文档、检索异常和预算耗尽必须分类报告。v0/v1 原始 `invalid_tool_call_rate` 是“轨迹是否出现任意 invalid reason”的历史字段，还包含重复/无进展，不等于纯格式错误率。
 
-## 主实验表
+## 第一版 SFT 数据与训练结果
 
-| 实验 ID | 模型/阶段 | 数据集 | 检索器 | 训练方式 | EM | F1 | 平均检索次数 | 备注 |
-|---|---|---|---|---|---:|---:|---:|---|
-| baseline-001 | 待填写 | HotpotQA | BM25 | 无训练 | - | - | - | |
-| sft-001 | 待填写 | HotpotQA | BM25 | SFT | - | - | - | |
-| rl-001 | 待填写 | HotpotQA | BM25 | GRPO outcome reward | - | - | - | |
-| rl-002 | 待填写 | HotpotQA | BM25 | DAPO + 成本奖励 | - | - | - | |
-| rl-003 | 待填写 | HotpotQA | BM25 | DAPO + 过程级 advantage | - | - | - | |
+第一版数据从 18,453 条严格有效 Teacher 轨迹中取 15,000 train + 1,000 teacher-forced eval。这是已完成基线，不是下一轮数据的目标分布。
+
+| 切分 | HotpotQA | NQ | 1 次检索 | 2 次 | 3+ 次 | 总数 |
+|---|---:|---:|---:|---:|---:|---:|
+| train | 10,827 | 4,173 | 10,808 (72.05%) | 3,230 (21.53%) | 962 (6.41%) | 15,000 |
+| eval | 757 | 243 | 717 (71.70%) | 219 (21.90%) | 64 (6.40%) | 1,000 |
+
+Loss 只监督 assistant 的 `<think>`、`<search>` 和 `<answer>` token；`<information>`、system/user 和 padding 不计 loss。两个正式训练均从 Qwen3.5-4B Base 开始，使用 BF16、cutoff 4096、有效全局 batch 8、cosine scheduler、warmup 5% 和 seed 42。
+
+| 实验 | 参数方式 | epoch / steps | 学习率 | train loss | 最终 eval loss | 训练时长 |
+|---|---|---:|---:|---:|---:|---:|
+| `qwen35-4b-lora-multiturn-policy-mask` | LoRA rank 16, alpha 32, all linear modules | 1 / 1,875 | 2e-5 | 0.31459 | 0.29869 | 6,734 s |
+| `qwen35-4b-full-multiturn-policy-mask` | Full SFT + ZeRO-3 | 1 / 1,875 | 1e-5 | 0.23753 | 0.30743 | 7,946 s |
+
+Full SFT 在 step 250/500/750/1000/1250/1500/1750/1875 的 eval loss 依次为 0.38493/0.37344/0.36251/0.34193/0.32629/0.31313/0.30777/0.30743，到 epoch 结束仍在改善。LoRA 当次 trainer state 没有保留周期 eval 记录，因此只报告最终 eval loss。
 
 ## 评分器审计与正式报告口径（2026-09-16）
 
@@ -153,15 +161,3 @@ Macro 指先在每个数据集内部计算指标，再对七个数据集等权�
 - 搜索尝试次数明显高于实际检索次数，尤其在多跳数据集上。这说明模型仍频繁重复查询；v1 允许其继续运行提高了 EM，但尚未解决搜索规划效率问题。
 - 2WikiMultiHopQA 和 MuSiQue 仍是主要瓶颈。Full SFT v1 EM 分别仅 9.680% 和 7.774%，后续应优先检查历史证据窗口、BM25 supporting-evidence recall 和 Teacher 多轮轨迹分布。
 - v1 完整产物位于 `outputs/eval/v1/qwen35_4b_{base,lora,full}_v1_neutral_50k.{jsonl,summary.json}`；四 shard 均严格覆盖固定 50k manifest，重建回退为 0。LoRA 有 1 条样本级 retrieval error，不影响文件完整性；Full SFT 没有 retrieval error。
-
-## 消融实验
-
-| 实验 ID | 改动项 | 对照组 | EM 变化 | 检索次数变化 | 结论 |
-|---|---|---|---:|---:|---|
-| - | 奖励中移除搜索成本 | - | - | - | |
-| - | 移除过程级 advantage | - | - | - | |
-| - | 不做 SFT 冷启动 | - | - | - | |
-
-## 结果解释与失败案例
-
-在这里保存代表性轨迹、奖励曲线、错误类型统计和对结果的解释。所有数字注明实验 ID，避免混淆不同数据版本或随机种子。

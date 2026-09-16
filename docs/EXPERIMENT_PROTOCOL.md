@@ -3,8 +3,9 @@
 ## 文档职责
 
 - 本文件保存已经冻结、可复现的实验协议及指标口径。
-- 近期实验的执行顺序保存在 `docs/ROADMAP.md`。
-- 完成后的正式数字写入 `docs/RESULTS.md`，不要把运行中的中间值当作最终结果。
+- 当前事实快照保存在 `docs/PROJECT_STATUS.md`，近期执行顺序保存在 `docs/ROADMAP.md`。
+- 完成后的正式数字写入 `docs/RESULTS.md`，不把运行中的中间值当作最终结果。
+- v0/v1 是历史基线；v2 是只改变历史上下文保留方式的预定消融；新 Teacher/SFT 主线使用本文件定义的 **v3 Search-R1-aligned canonical 协议**。v3 的设计已冻结，但在代码、单元测试和 pilot 验收完成前不得写成“已实现”。
 
 每次运行前复制一份配置并分配唯一实验 ID。必须记录：
 
@@ -26,7 +27,7 @@
 
 项目文档中的 **v0** 指当前正在使用的旧终止规则评测。代码写入结果 metadata 的内部协议名为 `qwen35_search_r1_v4_dp_doc_novelty`。v0 用于保存 Base、LoRA、Full SFT、27B Teacher 的第一版可比基线；后续修正重复搜索处理时必须产生新协议版本，不能覆盖 v0 文件。
 
-截至 2026-09-16，Base、LoRA 和 Full SFT 的 v0/v1 本地评测均已完成并严格合并。Teacher 已改在其他服务器评测，本机顺序启动脚本不再启动 Teacher。Qwen3.5-4B-Instruct 不属于 v0 四模型集合，计划直接使用修正后的 v1 协议评测。
+截至 2026-09-16，Base、LoRA 和 Full SFT 的 v0/v1 本地评测均已完成并严格合并。Teacher 已改在其他服务器评测，本机顺序启动脚本不再启动 Teacher。官方后训练模型 `Qwen3.5-4B`（官方命名没有 `-Instruct`）不属于 v0 四模型集合，当前直接使用修正后的 v1 协议评测。
 
 ### 代码与运行环境
 
@@ -220,7 +221,7 @@ v2 已专门保留给“累计检索历史并按 token budget 裁剪”。若后
 | 版本 | 重复查询 | 搜索预算后的回答机会 | 检索历史上下文 | 用途 |
 |---|---|---|---|---|
 | v0 | 归一化查询重复后立即终止 | 无；连续 8 轮搜索后直接结束 | 原始问题 + 最近一次检索交换 | 冻结的四模型旧协议基线 |
-| v1 | 不立即终止，不重复调用 BM25，返回中性 no-progress observation | 有；最多 8 次搜索尝试后保留一次最终回答生成 | 原问题 + 最近一次有效检索；纠错生成时临时附带当前重复动作和中性 observation | 隔离评估终止规则的影响，并加入 4B-Instruct |
+| v1 | 不立即终止，不重复调用 BM25，返回中性 no-progress observation | 有；最多 8 次搜索尝试后保留一次最终回答生成 | 原问题 + 最近一次有效检索；纠错生成时临时附带当前重复动作和中性 observation | 隔离评估终止规则的影响，并补充官方后训练 4B 基线 |
 | v2 | 继承 v1 | 继承 v1 | 累计保留全部检索交换，超过 prompt token budget 时确定性裁剪 | 隔离评估多跳历史证据保留的影响 |
 
 ### v1 冻结实现协议：重复查询与最终回答机会
@@ -307,3 +308,163 @@ v2 必须新增逐样本字段：`prompt_token_count_by_round`、`evidence_token
 - 至少重测所有进入第 3 次 assistant generation 的样本，因为从这一时刻起 v0/v1 会删除第一轮检索，而 v2 不会。
 - 只进行 0 或 1 次搜索且生成路径不受上下文变化影响的样本可以复用，但合并时同样记录 origin；若资源允许，正式主结果优先全量重跑。
 - v2 结果重点比较多跳数据集 EM/F1、2+ 搜索样本 EM、正确样本平均搜索次数、上下文截断率和 evidence token 使用量。
+
+## v3 Search-R1-aligned canonical 协议（设计冻结，待实现）
+
+### 目标与证据优先级
+
+v3 用于下一轮 27B Teacher 蒸馏、4B post-trained Full SFT 和同协议端到端评测。它不是 v1/v2 的覆盖更新，而是独立版本；旧结果和输出保持只读。所有无法从简历直接确认的细节按以下顺序确定：
+
+1. 简历明确描述；
+2. 本仓库固定数据中的原始字段；
+3. vendored Search-R1 上游代码和默认配置；
+4. 为避免人为失败而做的最小、显式扩展。
+
+已冻结的核心选择如下：
+
+| 项目 | v3 固定设计 |
+|---|---|
+| Teacher | 官方 post-trained `Qwen3.5-27B` |
+| Student 起点 | 官方 post-trained `Qwen3.5-4B`，不是 `Qwen3.5-4B-Base` |
+| 检索 | Wikipedia 2018 + Lucene BM25，top-k=3 |
+| 最大搜索 action | 4；之后额外允许一次 answer-only generation |
+| 上下文 | 累计的单一连续轨迹，不再只保留最近一次交换 |
+| 总上下文窗口 | 8192 tokens |
+| 单次 assistant 生成 | 最多 768 tokens |
+| 单次 top-3 observation | 最多 768 tokens |
+| 训练集 | 15,000 条唯一问题轨迹 |
+| teacher-forced eval | 1,000 条，与 train 按 question ID 隔离 |
+| 候补审计池 | 目标至少 2,000 条 |
+| SFT | 从 post-trained 4B 独立开始的 Full SFT；不把 LoRA 作为必经步骤 |
+| RL | v3 SFT 通过端到端准入门槛前不启动 |
+
+### Canonical Prompt
+
+Teacher 生成、SFT 和端到端评测都必须从 parquet 的 `prompt[0].content` 读取同一原文，不能在不同脚本中重新拼写。当前数据中的冻结文本为：
+
+```text
+Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information. After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. You can search as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}
+```
+
+为了复现 token 序列，第一版保留原文中的 `as your want`，不做文案润色。不增加额外 system prompt，也不在每次检索后追加 `Use the evidence above`、`final allowed search` 等普通提示。
+
+### 轨迹序列化与工具返回
+
+1. 使用对应 Qwen3.5 tokenizer/chat template 只渲染一次初始 user prompt，并加入 generation prefix。
+2. 后续 `<think>/<search>`、环境注入的 `<information>`、下一轮 `<think>/<search>` 或 `<think>/<answer>` 依时间顺序追加到同一条连续序列；`<information>` 不包装成新的 user turn。
+3. observation 统一序列化为：
+
+```text
+<information>
+Doc 1(Title: {title}) {text}
+Doc 2(Title: {title}) {text}
+Doc 3(Title: {title}) {text}
+</information>
+```
+
+4. 原始候选记录必须额外保存 doc ID、rank、BM25 score、未截断文本和实际输入文本。模型可见文本不要求暴露内部 doc ID。
+5. 上下文累计保留所有历史 query、结构标签和实际送入模型的 evidence。不得再使用“问题 + 最近一次交换”的策略。
+
+### Token 预算与截断语义
+
+Qwen3.5-4B/27B 本地配置支持 262,144 token，但 v3 的操作窗口固定为 8192，以控制 vLLM KV cache、SFT activation 成本和吞吐。8192 不是模型能力上限，而是本实验的资源/协议上限。
+
+预算按用途拆分，不能把一个 `max_tokens` 同时解释为全部限制：
+
+| 预算 | 固定值 | 语义 |
+|---|---:|---|
+| `max_model_len` / SFT `cutoff_len` | 8192 | prompt + 历史 action + 历史 observation + 当前生成的总上限 |
+| 初始 prompt 设计预算 | 512 | chat template、工具说明、问题；超过即数据 QA 失败，不通过左截断修复 |
+| `max_new_tokens_per_action` | 768 | 每次 `<think>...<search/answer>` 的输出硬上限 |
+| `max_observation_tokens` | 768 | 一次 top-3 `<information>` 整块的硬上限 |
+| `max_search_actions` | 4 | 合法、重复或无进展的 search action 都消耗预算 |
+| answer-only generation | 1 | 第 4 次搜索后只允许回答，不增加搜索额度 |
+
+最坏设计包络约为 `512 + 4 × (768 action + 768 observation) + 768 final answer = 7424` tokens，低于 8192，并保留约 768 token 的实现/模板余量。正常样本不应触发总上下文裁剪。
+
+observation 必须按实际 tokenizer 做 token 级裁剪，而不是按 Python 字符数裁剪。标题、rank 和三篇文档的存在优先保留；正文预算在三篇文档间均衡分配，短文档未使用的预算可以确定性地让给长文档，最终断言整个 `<information>` 不超过 768 token。不能简单保留拼接块的前 768 token，导致 Doc 3 系统性消失。裁剪算法不得使用 gold/supporting facts 做 oracle 选句；supporting-document 和 supporting-sentence 可见性必须在裁剪后的实际模型输入上审计。
+
+assistant 输出遇到 `</search>` 或 `</answer>` 立即停止。如果达到 768 token 仍没有闭合合法动作，标记 `generation_truncated`：Teacher 候选不得进入 SFT，端到端评测记为失败；禁止补标签或拼接成伪完整轨迹。
+
+SFT 构建阶段对每条 canonical 序列使用 Student tokenizer 精确计数。超过 8192 token 的候选必须留在原始候选池并以 `sequence_overflow` 拒绝，不能静默截断问题、早期证据、目标 action 或最终答案。评测阶段若实现断言发现输入加预留输出将超过 8192，应记录 `context_overflow` 并失败；pilot 验收要求该比例接近 0，再决定是否需要建立新的长上下文协议。
+
+`cutoff_len=8192` 只表示允许的上限，不表示把每条训练样本预填充到 8192。训练应动态 padding 到当前 batch 的最长样本，并尽量按长度分桶，以免短轨迹为未使用 token 支付显存和计算成本。若启用 sample packing，必须先验证轨迹边界、attention mask 和 information loss mask 不会跨样本污染；第一轮 smoke test 默认不依赖 packing。
+
+#### Token 预算的现有数据依据
+
+2026-09-16 使用 `/data0/xs/models/Qwen3.5-4B` tokenizer，对旧合并 Teacher 轨迹每 7 条抽 1 条，共 2,637 条进行诊断；该样本只用于定预算，不用于声称新数据分布：
+
+| 部分 | mean | p90 | p95 | p99 | max |
+|---|---:|---:|---:|---:|---:|
+| 初始 canonical prompt | 147.8 | 169 | 184 | 210 | 273 |
+| 单个 information block | 470.0 | 517 | 533 | 573 | 658 |
+| 两个 information 之间的 assistant segment | 203.0 | 379 | 491 | 672 | 767 |
+| prompt + 完整旧轨迹 | 1290.5 | 1995 | 2329 | 3420 | 5353 |
+
+因此 Search-R1 上游的 500-token action/observation 默认值会截断一部分现有真实输出，而 768 基本覆盖观察到的 p99；新数据又将显著提高 2+/3+ 搜索比例，继续使用 4096 总窗口会增加早期多跳证据被裁剪的风险。8192 是本项目当前更稳妥的主配置。若未来需要与原始上游做严格 token-budget 消融，可另建 `v3_4k_compat`，不能混入主结果。
+
+### 搜索、重复与计数
+
+1. 每个合法 `<search>` 都增加 `search_action_count`，包括重复 query 和返回旧文档的 query；这是 v3 的主要“平均检索次数”口径。
+2. 相同 query 不终止，可以从确定性缓存返回相同 top-3，但仍计入 action/cost；不向模型提供带有答案信息的纠错提示。
+3. 不同 query 返回相同文档也继续运行并计为 no-progress。
+4. 同时报告 `bm25_execution_count`、`unique_query_count`、`retrieved_document_count`、`unique_document_count`、`progressive_search_count` 和 `no_progress_search_count`。
+5. 达到第 4 次搜索后保留一次 answer-only generation；若再次输出搜索，不执行并以 `search_limit` 结束。
+
+### Teacher 候选生成与保存
+
+pilot 首先按 source/type/level 分层抽取约 2,000 个唯一问题，每题用不同确定性 seed 采样 4 条候选，形成约 8,000 个 rollout。建议初始解码为 `temperature=0.7`、`top_p=0.9`；所有候选都落盘，不能只保存通过项。
+
+候选记录至少保存：稳定 question ID、source、split、gold aliases、Hotpot type/level/supporting facts、原始输出、canonical 序列、逐轮 prompt token 数、query、doc ID/rank/score、截断前后 evidence、最终答案、终止原因、所有过滤标签、模型/Prompt/protocol/tokenizer/retriever 版本和 seed。
+
+pilot 先测严格合格率，再按 `目标 18,000 / 严格合格率 × 1.2` 估计扩采规模；后续按缺口定向补采，不能继续按生成顺序取前 15,000 条。
+
+### 硬拒绝规则
+
+以下任一条件成立时，轨迹不进入正式 SFT：
+
+- 标签缺失、嵌套或顺序错误，动作外存在不允许文本，模型伪造 `<information>`；
+- 空 search、空 answer、超过 4 次搜索、生成截断、上下文溢出或检索异常；
+- 最终答案按非空 normalized EM 与所有 gold/alias 都不一致；
+- 没有任何检索，只有闭卷正确答案；
+- query 完全重复，或不同 query 没有带来任何新文档/新证据；
+- query 与记录的 information 不对应；
+- question ID 重复或与 teacher-forced eval、interactive dev、final test 泄漏。
+
+生成环境允许含重复/无进展动作的候选继续运行，以便分析恢复能力；但正式 SFT 数据仍严格排除这些轨迹。不得从原轨迹中手术式删除坏步骤后冒充 Teacher 原始轨迹；应选择同题的另一条干净 rollout，或重新采样。
+
+### 证据质量与候选排序
+
+HotpotQA 使用数据集直接提供的两篇 supporting-document 标题和 supporting sentence ID：
+
+- A 级：答案正确、行为干净、两篇 gold supporting documents 都进入模型可见上下文；在语料能够对齐 supporting sentence 时，还需确认关键 supporting sentence 未被 observation 截断；后续搜索产生新证据；
+- B 级：答案和行为正确，但只覆盖一篇 gold supporting document，另一跳可能依赖参数知识或非 gold 文档。
+
+正式 15k 优先使用 A 级；B 级只作有明确上限的候补并单列报告。一次搜索若在 top-3 中同时覆盖两篇 gold 文档，属于真实高效轨迹，不能为增加轮数而删除。NQ 不强制多轮，但至少要求一次有效检索，并统计 gold answer/alias 是否出现在可见 evidence 中。
+
+同一问题的多条硬性合格轨迹按以下词典序选择：完整证据覆盖、每轮有新证据、无截断、在同等覆盖下更少的无效成本和 token。不能用“更短”压过证据更完整的轨迹。
+
+最终候选池目标不少于 18,000 条；确定性、按 question ID 分层选择 15,000 train + 1,000 teacher-forced eval，保留至少 2,000 条候补。初始组成目标为 HotpotQA/NQ 约 70%/30%，HotpotQA 内尽量保持原始 bridge/comparison 和 easy/medium/hard 分布；2+ 搜索轨迹目标至少 60%，3+ 目标约 20%–30%，但不得以冗余查询人工填长。
+
+### SFT 表示与 Loss
+
+每条轨迹作为一条与运行时一致的连续序列训练，不再把每一步改造成不同角色语义的伪 user turn。使用自定义预处理/collator 生成精确 span mask：
+
+| token span | loss |
+|---|---:|
+| system/user/chat-template prompt | mask (`-100`) |
+| 模型生成的 `<think>...</think>` | 计算 |
+| 模型生成的 `<search>...</search>` | 计算 |
+| 环境注入的 `<information>...</information>` | mask (`-100`) |
+| 模型生成的 `<answer>...</answer>` | 计算 |
+| padding | mask (`-100`) |
+
+LLaMAFactory 的 `train_on_prompt=false` 不能单独证明 assistant 内部 information 已正确 mask；正式训练前必须对 tokenizer 后的 `input_ids/labels` 做自动断言和可读抽查。
+
+### 数据与评测报告
+
+候选漏斗必须报告总候选、格式、答案、工具有效性、重复/no-progress、Hotpot 双支持覆盖、NQ evidence grounding、1/2/3/4 次搜索、每轮新文档、截断/溢出和各拒绝原因；拒绝原因允许多标签。
+
+最终数据必须报告 source/type/level、搜索轮数、search actions、unique queries/docs、Hotpot support recall、NQ answer-evidence coverage、token 长度 p50/p90/p95/p99/max、有效监督 token 比例和 information mask 比例。
+
+最终评测的主指标为非空 EM、token F1、`search_action_count`、正确样本平均搜索 action、Hotpot support recall、格式合规和 answer rate；BM25 实际执行、unique query/doc、重复/no-progress、预算耗尽和停止原因作为辅助指标。未训练的 post-trained 4B 和新 Full SFT 必须在完全相同的 v3 协议下重测；v0/v1 数字只作历史参考。

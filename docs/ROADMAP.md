@@ -1,145 +1,212 @@
-# 多轮检索问答复现实验方案
+# SFT 优先的下一阶段执行计划
 
-## 目标与验收口径
+更新日期：2026-09-16
 
-复现 Qwen3.5-27B Teacher → Qwen3.5-4B Student 的多轮 BM25 检索问答链路。正式结果必须包含 15,000 条真实搜索轨迹、独立 1,000 条 SFT eval，以及固定 50k 跨数据集测试子集。核心指标为 EM、F1、平均检索次数和无效工具调用率；所有实验保存配置、代码版本、随机种子、日志和 checkpoint。
+## 当前决策
 
-## 近期实验计划（2026-09-16，SFT 优先）
+下一阶段不启动 GRPO/DAPO。现有 Full SFT 已证明 SFT 方向有效，但冷启动数据中 72.05% 的样本只搜索一次，且 Teacher/SFT/评测的 Prompt 和上下文策略并未完全对齐。在这种初始策略上直接惩罚检索次数，很可能加剧过早回答，而不是学到更高效的多跳搜索。
 
-本节是近期执行顺序；下方阶段 6–9 的 RL 工作暂不启动。当前首先把评测口径和 SFT 数据做好，避免同时修改多个变量。
+模型起点已确定：27B Teacher 继续使用官方 post-trained `Qwen3.5-27B`；新 Full SFT Student 使用官方 post-trained `Qwen3.5-4B`（即本项目所说的 instruction-capable 模型），不再使用 `Qwen3.5-4B-Base`，也不进行两种初始化的训练对照。主要提升必须相对这个未训练的 post-trained 4B baseline 计算，以保证公平。
 
-### P0：冻结 v0 四模型基线
+近期唯一主线是：
 
-状态：三个本地 4B 模型的 v0/v1 已完成；27B Teacher 结果仍待从其他服务器回传。
+```text
+收尾现有基线
+    → 实现并核验已冻结的 v3 Search-R1-aligned 合同
+    → 修正 scorer 并建立无偏端到端 dev
+    → Teacher 恢复采样 pilot
+    → 决定局部补采还是全量重采
+    → 重建 15k + 1k SFT 数据
+    → 从官方 post-trained 4B 训练新 Full SFT
+    → 同一新协议下对比
+    → 达到准入门槛后再讨论 RL
+```
 
-1. 按 `docs/EXPERIMENT_PROTOCOL.md` 中的 v0 协议保存 Base、LoRA、Full SFT、27B Teacher 的逐条输出、summary、日志和实际配置。
-2. Base、LoRA、Full SFT 已完成；Teacher 不在本机自动排队，由其他服务器完成后回传。
-3. v0 文件只读保留，不因后续修复而覆盖。
-4. 正式结果同时报告各数据集、50k micro average，并补算七数据集等权 macro average；搜索指标至少区分成功搜索、搜索尝试、返回文档数和去重文档数。
+每一阶段只修改明确的变量，上一阶段没有完成验收时不启动后续的大规模训练。
 
-验收：四模型恰好覆盖同一固定 manifest 的 50,000 个 eval ID，所有 shard 完整合并，协议 metadata 和文件路径可追溯。
+## P0：收尾并冻结现有基线
 
-### P1：修正重复搜索提前终止并做局部续测
+状态：进行中，不阻塞代码/数据审计。
 
-状态：已完成 Base、LoRA、Full SFT 的 50k v1 局部续测、严格合并和结果记录；下一步补充 Instruct 基线并做失败类型审计。
+### 任务
 
-1. 保持 v0 的模型、manifest、Prompt、BM25、top-k=3、最大 8 轮和解码参数不变。
-2. 归一化查询完全重复时不再立即终止：不重复请求 BM25，返回固定的中性 no-progress observation（不使用“错误/重复”等措辞），并消耗一次搜索尝试预算。
-3. 搜索尝试预算固定为 8；第 8 次尝试处理完后额外保留一次只用于最终 `<answer>` 的生成，因此最多 9 次 assistant generation。
-4. 不同查询返回相同文档时继续保留 v0 的 no-progress 标记，但不终止；重复查询纠错生成临时保留最近一次有效证据，总搜索尝试预算防止循环。
-5. 仅处理 v0 中 `repeated_search` 和“8 次搜索后无回答机会”的 `max_rounds` ID。优先从已保存的停止状态续接；若必须从头生成，则固定确定性解码并单独标记，避免把随机漂移归因于协议修复。
-6. 普通格式错误与合法但错误的最终答案仍然停止，不提供 gold 正误反馈。
-7. 未受影响样本原样复用，合并为单独的 v1 corrected 结果，不能覆盖 v0。
+1. 完成正在运行的 Qwen3.5-4B 官方后训练版 v1 50k 评测。注意正式模型名称是 `Qwen3.5-4B`，不得再写成不存在的 `Qwen3.5-4B-Instruct`。
+2. 等待其他服务器回传 27B Teacher 完整结果；本机不重复启动 Teacher 评测。
+3. 完成后严格校验 50,000 个 eval ID、metadata、重复/缺失 ID 和非空答案评分，再更新 `RESULTS.md`。
+4. v0/v1 的原始 JSONL、summary 和日志保持只读，不因后续修改而覆盖。
 
-必须报告：受影响样本比例、续测答对率、全量 EM/F1 增量、额外搜索次数、各终止类别的恢复贡献。
+### 验收
 
-### P1：加入 Qwen3.5-4B-Instruct 基线
+- 每个模型都恰好覆盖固定 manifest 的 50,000 个 ID。
+- `RESULTS.md` 只包含完整结果，没有运行中估计。
+- 报告同时包含 micro/macro EM、F1、实际 BM25 调用、搜索尝试、格式错误、重复查询和终止原因。
 
-1. 使用修正后的 v1 协议，不再为 Instruct 单独运行有已知缺陷的 v0。
-2. 使用模型官方 chat template，但任务文字、工具标签、检索器、top-k、轮数、stop strings、解码参数和评分器与 v1 其他模型一致。
-3. 先在每个数据集固定 500–1,000 条上试跑，检查格式、速度和搜索行为；正常后再运行完整 50k。
-4. 重点比较 EM/F1、全部样本与正确样本搜索次数、零搜索率、重复率、格式错误率及最大轮数终止率。
+## P1：冻结 canonical 交互合同
 
-验收：可以回答 Instruct 是否比 Base 更主动搜索，以及增加的搜索是否带来准确率或证据覆盖收益，而不只比较一个平均搜索次数。
+状态：设计已冻结、代码待实现；完整规范见 `EXPERIMENT_PROTOCOL.md` 的 v3 章节。这是新 Teacher 采样、SFT 和评测的共同依赖。
 
-### P1：两个低成本审计
+### 必须对齐的字段
 
-1. **BM25 检索上限**：统计 gold answer 或有标注的 supporting evidence 在 top-1/3/5/10 中的召回，按数据集拆分。若检索上限不足，先处理语料/检索器问题，不把失败归因于 SFT。
-2. **答案评分审计**：分层抽查约 200 条 EM=0，检查别名、日期、标点、答案提取和数据集官方 evaluator 差异。
+1. **初始任务说明**：Teacher 生成、SFT 和端到端评测直接读取 parquet 中的 Search-R1 原始 prompt，不再让 SFT 只看裸问题，也不在不同脚本中改写文字。
+2. **动作语法**：assistant 每轮只能输出 `<think>...</think><search>...</search>` 或 `<think>...</think><answer>...</answer>`。
+3. **连续轨迹**：Qwen chat template 只渲染初始 user prompt；后续 assistant action 和环境 `<information>` 在同一序列中累计，不把 evidence 改成新 user turn。
+4. **工具返回**：BM25 top-k=3，使用 `Doc n(Title: ...)` 格式；doc ID/rank/score 和截断前文本写入审计记录。
+5. **重复查询**：评测/生成时不立即终止，合法 search 都计 cost；可以用缓存返回相同 top-3。正式 SFT 严格排除含重复或无进展步骤的轨迹，不手术式删除步骤。
+6. **搜索预算**：最多 4 次 search action，之后额外给一次 answer-only 机会。
+7. **Token 预算**：总上下文/SFT cutoff 8192、每次 assistant 最多 768、每次 top-3 observation 最多 768；所有限制按实际 tokenizer 计算。
+8. **错误语义**：重复/无进展与格式错误、空查询、检索异常、生成截断、上下文溢出分开记录。
+9. **答案评分**：归一化后的 prediction 和 gold 都必须非空；标准 EM/F1 实现在所有环节复用。
 
-这两项可以与 Full/Teacher 评测并行准备，但不得修改正在运行的 v0 文件。
+### 上下文策略决策
 
-### P2：量化旧 Teacher 严格过滤造成的数据损失
+v3 固定使用 `cumulative_flat_8k`：累计保留问题、所有 action 和实际 evidence。设计包络不超过 7424 token，正常情况下不做历史裁剪。Teacher/SFT 候选若超过 8192 直接以 `sequence_overflow` 拒绝，不能静默截断；评测若出现 overflow 记为失败并报告。`latest_exchange` 只属于历史 v0/v1，不再用于新蒸馏主线。
 
-1. 先盘点旧原始候选、debug 文件、被拒绝问题 ID 和过滤日志是否仍保留，不立即全量重采。
-2. 统计答案错误、格式错误、重复查询、重复 information、空结果、无进展等拒绝原因，以及过滤前后 1/2/3+ 搜索轨迹分布。
-3. 从“仅因重复或无进展而被拒绝”的问题中分层抽取 1,000–2,000 条做恢复 pilot：第一次重复后允许重新规划；最终成功且答案正确可以保留，一直重复到预算耗尽才拒绝。
-4. 比较恢复成功率、多轮占比、Teacher 正确率和搜索成本，确认增加的是有效多跳轨迹，而不是更长的无效轨迹。
+### 产物与验收
 
-决策门：若旧原始状态可恢复、Prompt 兼容且局部补采足以恢复合理的多轮分布，则复用旧有效轨迹并只补采缺失部分；若 Prompt 将实质改变、原始失败状态丢失或旧数据严重偏向一轮轨迹，才进行全量重新生成。
+- 新建一份机器可读的 canonical 配置，Teacher/eval/SFT 转换从同一来源读取 Prompt、标签、top-k、轮数和 token budget。
+- 对同一题生成 Teacher prompt、SFT conversation 和 eval prompt 的逐字段 diff，除 chat template 的必要包装外不得有语义差异。
+- 加入边界测试：恰好 768/8192 token、动作标签位于最后 token、三篇文档均保留、超限显式失败、information labels 全为 `-100`。
+- 新协议使用 v3 和独立输出目录；不修改 v0/v1/v2 文件，也不将新结果与 v1 当成同口径数字。
 
-### P2：在新一轮 Teacher 生成前锁定 canonical Prompt
+## P2：评分、检索上限和数据隔离审计
 
-1. v0→v1 期间保持当前评测 Prompt 不变，以便只测终止规则影响。
-2. Teacher 恢复 pilot 可以先沿用旧 Prompt，用于量化“严格过滤”单变量影响。
-3. 正式补采/重采前，对 Teacher 生成、SFT 数据表示和评测 Prompt 做逐字段对照。默认优先以当前评测 Prompt 为 canonical，反向对齐 Teacher 和 SFT，从而复用 v1/v2 基线。
-4. 必须统一标签语义、每轮动作数、错误纠正、重复处理、top-k、文档截断、最大轮数、stop strings、答案格式和消息角色。
-5. v2 已保留给上下文策略实验，仍使用当前评测 Prompt。若 canonical Prompt 与当前评测 Prompt 有实质变化，另建 v3；先在固定小样本上重测必要对照，确认收益后再扩展，不能跨版本直接比较。
+状态：在 Teacher pilot 前完成。
 
-### P2：v2 累计检索历史上下文
+### 评分器
 
-1. v2 继承 v1 的重复查询处理、8 次搜索尝试预算和额外最终回答轮，只改变上下文保留方式。
-2. 不再只保留“问题 + 最近一次检索交换”，而是按时间顺序累计所有搜索和 information。
-3. vLLM 总上下文仍为 4096 tokens，并为本轮生成固定预留 768 tokens；应用模型 chat template 后的输入 prompt 不得超过 3328 tokens。
-4. 超预算时优先从最早轮、低排名文档开始裁剪 evidence 正文，保留问题、所有 query、结构标签、文档 ID/标题和最新 evidence；必要时再裁剪最早的历史 think。
-5. 先在固定多跳子集上比较 v1/v2，再决定是否扩展；至少重测所有进入第 3 次 assistant generation、因而会受到历史保留变化影响的样本。
+1. 在新 online evaluator/reward 中直接修复空字符串 EM/F1 问题。
+2. 建立单元测试：空 prediction、只含标点的 gold、`The A`、多别名、日期/数字和正常答案。
+3. 分层抽查约 200 条 EM=0，区分真正错答、别名问题、答案抽取问题和数据集官方 evaluator 口径差异。
 
-验收：明确累计历史是否提高 HotpotQA、2WikiMultiHopQA、MuSiQue 等多跳数据集表现，并报告上下文截断率和每轮实际 token 使用量。
+### BM25 上限
 
-### P3：重建 SFT 数据并只正式训练 Full SFT
+1. 在 HotpotQA/NQ 以及有 supporting evidence 标注的多跳集上统计 top-1/3/5/10 的 answer-string recall 和 supporting-document recall。
+2. 按数据集、单跳/多跳、答案类型拆分；不把 BM25 本身无法召回的题归因于 SFT。
+3. 记录 query→doc ID 和实际返回文档数，不用“一次 top-k=3”代替真实 doc count。
 
-1. 使用真实 27B Teacher 轨迹；按问题 ID 去重并排除评测泄漏，在切分后的固定 train/eval 上构造数据。
-2. 硬性拒绝答案错误、不可恢复格式、空查询/空结果和持续无进展；对能够纠正后成功的轨迹按证据覆盖、重复率和成本排序，不因第一次重复直接删除整题。
-3. 显式核验 NQ/HotpotQA 来源比例、1/2/3+ 搜索分布、长度和截断分布。
-4. SFT loss 继续监督 `<think>`、`<search>`、`<answer>`，mask `<information>`、system/user 和 padding；训练前抽样核对 token labels。
-5. 先比较 v1 下当前 Full 与 LoRA。若 Full 明确更好，新数据不再完整训练 LoRA；先做短 Full SFT smoke test，正常后从原始 Qwen3.5-4B Base 独立启动正式 Full SFT。
+### 数据隔离
 
-验收：验证 loss、生成格式和多轮行为正常；新 Full 在同一 canonical 协议下与 Base、Instruct、旧 Full、Teacher 对比。近期到此为止，暂不进入 RL 或大规模超参数搜索。
+- 为每道题保留稳定 question ID、source、gold answers 和 split。
+- 使用 ID/hash 去重，检查 train、teacher-forced eval、interactive dev 和固定 50k final test 无泄漏。
+- 固定 50k test 不再用于频繁调参；建立 2k–5k 的无偏 interactive dev，从未用于 SFT 的数据中确定性抽样并保留 gold。
 
-### 当前明确不做
+## P3：Teacher 恢复采样 pilot
 
-- 暂不启动 GRPO、DAPO、成本奖励或过程级 advantage。
-- 暂不同时调整学习率、epoch、top-k、Prompt 和过滤规则。
-- 暂不因平均搜索次数下降就判定模型更好；必须结合 EM/F1、正确样本搜索次数和无效行为分析。
+状态：高优先级；先运行小规模，不直接全量重采。
 
-## 阶段 0：环境冻结
+### Pilot 设计
 
-锁定 Python、CUDA、PyTorch、Transformers、vLLM、LLaMA-Factory 和 veRL 版本，记录 GPU 型号与显存。现代 Qwen3.5 推理环境与旧版 Search-R1/veRL 环境隔离；每次实验保存 `pip freeze` 和启动命令。
+1. 从 HotpotQA/NQ 按 source、Hotpot type/level 分层取约 2,000 道唯一问题，每题以 4 个 seed 生成候选，第一轮约 8,000 个 rollout。
+2. 使用 post-trained 27B Teacher、v3 原始 Prompt、top-k=3、最多 4 次 search、8192/768/768 token 预算；初始采样使用 `temperature=0.7, top_p=0.9`。
+3. 对所有候选落盘，不只保存成功轨迹。必须保存原始输出、canonical 序列、逐轮 prompt token 数、query、doc IDs/rank/score、截断前后 evidence、答案、终止原因和 validator 的全部失败标签。
+4. 生成环境允许重复/no-progress 后继续，以观察恢复能力；但正式 SFT 严格拒绝含重复、无进展、格式错误、空 query、空结果、生成截断、上下文溢出或最终错答的轨迹。
+5. 禁止删除坏步骤后保留其余部分。优先从同一问题的其他 rollout 选择干净轨迹；没有则重新采样。
+6. HotpotQA 使用两篇 gold supporting documents 做证据覆盖审计；NQ 统计 gold answer/alias 是否出现在模型可见 evidence 中。
 
-## 阶段 1：数据与检索器
+### 必须报告
 
-准备 HotpotQA、NQ、Bamboogle（如使用）及 Wikipedia 2018。构建 Lucene BM25，固定 analyzer、索引版本、top-k=3。验证空查询、未命中、排序稳定性、docid 到正文回读和重复查询行为。
+- 候选数、正确率、格式合规率、可恢复/不可恢复失败率。
+- 过滤前后 1/2/3/4 次 search action、实际 BM25、unique query/doc 分布。
+- 重复/no-progress 后恢复正确的数量，以及为何仍不进入正式 SFT。
+- Hotpot 双 supporting-document 覆盖率、逐轮 support recall；NQ answer-evidence coverage。
+- 按 source/type/level 的成功率、轨迹 token p50/p90/p95/p99/max、生成截断和上下文溢出率。
 
-验收：索引文档数与校验和固定；健康查询返回可解析正文；检索服务可被生成和评测脚本复用。
+### 采样规模决策门
 
-## 阶段 2：多轮环境与基线
+- v3 Prompt、连续上下文和 observation 格式均与旧 18,453 条不兼容，因此新主线原则上全量重采；旧数据只用于长度、错误分布和对照分析，不能与 v3 轨迹直接混合。
+- 先用 pilot 严格合格率估计规模，按 `18,000 / 合格率 × 1.2` 生成候选；若多轮/困难桶不足，再按缺口定向扩采。
 
-定义严格序列：assistant 输出 `<think>`，可输出 `<search>query</search>`；环境返回 `<information>...</information>`；最终输出 `<answer>...</answer>`。实现最多 8 轮、查询去重、空结果处理、停止条件和轨迹记录。
+不设“每题必须多次搜索”的硬标签，因为一次 top-k=3 可能已完整覆盖两篇支持文档。最终选集软目标为 2+ 至少约 60%、3+ 约 20%–30%；必须同时满足证据新增，不得用冗余 query 填长轨迹。
 
-先评估 Base 模型，记录 EM/F1、平均搜索次数、零搜索率、无效调用率和失败类型，作为后续所有训练的对照。
+## P4：重建 SFT 数据
 
-## 阶段 3：Teacher 轨迹
+状态：依赖 P1–P3。
 
-用 Qwen3.5-27B 生成候选轨迹。过滤空/重复查询、空证据、格式错误、缺少搜索、答案不匹配和违反工具顺序的样本。保留原始轨迹、过滤原因、数据源和搜索次数；固定 15,000 train + 1,000 eval，禁止 oracle-only 样本混入。
+### 构建规则
 
-## 阶段 4：SFT 数据与监督定义
+1. 先取得不少于 18,000 条严格合格候选，再按 question ID 去重并排除 interactive dev/final test 泄漏，确定性分层选择 15,000 train + 1,000 teacher-forced eval，至少保留 2,000 条候补。
+2. 分层至少包含 source、Hotpot type/level、搜索 action 桶（1/2/3/4）、证据覆盖等级和轨迹长度桶；固定 seed 并生成 manifest/checksum。
+3. 样本 metadata 保留 question ID、source、gold answers、Teacher 模型、Prompt/protocol 版本、query/doc IDs、搜索次数、过滤标签和原始轨迹指针。
+4. 15,000/1,000 表示 canonical **完整轨迹数**。每条轨迹按运行时顺序编译为单一连续序列，不改写成新的 user/environment 多轮 chat，也不把一条轨迹默认拆成多个独立训练样本。
+5. chat template 只渲染 canonical 初始 prompt；环境 `<information>` 直接插入连续轨迹，但其 label 全部为 `-100`。
+6. Loss 监督该轨迹内所有由 Teacher 生成的 `<think>`、`<search>` 和 `<answer>`，屏蔽 prompt、全部 `<information>` 和 padding。使用自定义预处理/collator，不能只依赖 `train_on_prompt=false`。
+7. Student tokenizer 后序列必须 `<=8192`；任何超限候选以 `sequence_overflow` 拒绝，禁止静默截断目标、证据或标签。
+8. 初始选集目标约 HotpotQA/NQ=70%/30%；HotpotQA 优先双 supporting-document 覆盖，保持原始 type/level 分布。一次搜索若同时覆盖双支持文档可以保留。
 
-将检索结果作为独立环境消息，确保只对 assistant 生成内容计算 loss。对每条样本抽样核对 `input_ids`、`labels`、turn 边界和有效监督 token 比例；检查 truncation 不会截断 answer 或破坏工具序列。LoRA 与 Full SFT 必须使用完全相同的数据、模板、cutoff、seed 和 eval 集，仅改变 finetuning type 与学习率。
+### 数据 QA
 
-建议初始配置：cutoff 4096、有效全局 batch 8、LoRA lr 2e-5、Full lr 1e-5、cosine、warmup 5%、BF16、gradient checkpointing、每 250 step eval/save。若 loss 早期平台，优先检查 mask、截断比例、重复样本和学习率，再调整超参。
+- 100% 结构解析、question ID 唯一性、split 泄漏、最终答案正确和 query→information 对齐检查。
+- 按 source/type/level/搜索次数/证据覆盖分层人工抽查，重点检查 2+/3+ 轨迹是否真正获得新证据。
+- 在正式训练前对 tokenizer 后 `input_ids/labels` 做自动断言和可读抽样：prompt、evidence、padding 全为 `-100`，所有 Teacher action/answer 为有效 label，没有空监督或越界样本。
+- 报告 token 长度 p50/p90/p95/p99/max、截断数、有效监督 token 比例和 1/2/3+ 搜索分布；与旧 15k 表格对比。
 
-验收：训练无异常；eval loss 与生成式 EM 同步改善；checkpoint 可恢复；正式报告只使用正确 mask 的重跑结果。
+### 验收
 
-## 阶段 5：统一评测
+- 恰好 15,000 train + 1,000 eval canonical 轨迹，全部来自真实 27B Teacher 工具轨迹，并保留至少 2,000 条候补审计轨迹。
+- 没有格式错误、答案错误、空/无效工具调用或未记录的静默修改。
+- 多轮占比与证据新增统计同时改善，而不是只把平均搜索次数做高。
 
-使用固定 test.parquet 50k 子集和相同 BM25/生成参数评估 Base、LoRA、Full。保存逐条轨迹、答案、搜索次数和错误分类，计算 EM、F1、均值及置信区间。不得用训练集或 SFT eval 替代测试结果。
+## P5：从 post-trained 4B 训练新 Full SFT，不重训 LoRA
 
-## 阶段 6：Outcome GRPO
+状态：依赖 P4；只在数据 QA 通过后启动。
 
-在 Full/LoRA 中选定正式 SFT checkpoint，先实现仅答案正确性奖励的 GRPO。固定 rollout 数、采样温度、KL、最大轮数和 batch；监控 reward、EM、搜索次数、长度和 KL，防止奖励崩溃。
+### 初始配置
 
-## 阶段 7：成本感知奖励
+- 从官方 post-trained `/data0/xs/models/Qwen3.5-4B` 独立开始，不在旧 SFT checkpoint 上继续。该模型是已有指令遵循能力的官方后训练 checkpoint，正式名称没有 `-Instruct`。
+- Full-parameter SFT + ZeRO-3，GPU 0–3，BF16，gradient checkpointing，`cutoff_len=8192`；若 4 卡 smoke test 显存不足，只调整 micro-batch/ZeRO/offload，不静默把数据截回 4096。
+- 8192 只是允许上限；训练动态 padding 到 batch 最长样本并按长度分桶，不把全部样本预填充到 8192。sample packing 只有在边界和 loss-mask 测试通过后才能启用。
+- 初始保留有效全局 batch 8、lr 1e-5、cosine、warmup 5%、seed 42，避免在换数据的同时修改过多超参。
+- 最多预留 2 epochs；第 1 epoch 后是否继续，由 teacher-forced loss 与 interactive dev 共同决定，不预先强制训满。
 
-加入搜索次数或额外搜索惩罚，比较相同准确率下的成本变化。报告奖励权重、准确率—搜索次数曲线及过早停止、零搜索等失败案例。
+### 两层验证
 
-## 阶段 8：DAPO 与动态采样
+1. **Teacher-forced eval**：固定 1,000 条，每 250 optimizer steps 计算 eval loss，同步 save checkpoint；记录监督 token 数，确保 loss 口径不变。
+2. **Interactive dev**：真实调用 BM25 进行多轮 rollout。每 500 steps 在固定的约 1,000 题快速子集上评估；每个 epoch 结束和候选最佳 checkpoint 在完整 2k–5k dev 上评估。
 
-迁移到兼容当前 vLLM 的新版 veRL/DAPO 实现，明确动态采样、裁剪、KL 和长度设置。先做小规模 smoke test，再进行正式训练；记录吞吐、显存、有效 rollout 比例和稳定性。
+Interactive dev 必须上传 SwanLab：EM、F1、answer rate、format compliance、actual searches、search attempts、progressive/redundant searches、unique docs、repeat rate、search-limit rate、context truncation rate，并按 source 和 1/2/3+ 搜索桶拆分。
 
-## 阶段 9：过程级 credit assignment
+### Checkpoint 选择与第二轮决策
 
-按搜索结果相关性、后续答案贡献或状态等价类估计中间 advantage，改善多工具调用的 credit assignment。与 outcome-only 对照，做移除过程奖励和移除成本奖励的消融。
+- 不再只按最低 eval loss 选模型。主排序为 interactive dev EM/F1；在准确率似然相当时，再用较少的冗余搜索、较高格式合规率和较低预算耗尽率破平。
+- 只有第 1 epoch 末 interactive dev 仍在改善、eval loss 未显著恶化且格式/搜索行为无退化时，才从 checkpoint 续训第 2 epoch。
+- 若 loss 下降但 EM 不升，先检查输入协议、数据分布和生成行为，不盲目增加 epoch。
+- checkpoint 保留策略需要保留至少：最佳 interactive EM、最低 eval loss、每个 epoch 末三类节点，避免 `save_total_limit=2` 提前删掉需要的候选。
 
-## 阶段 10：最终材料
+## P6：新 SFT 的同协议对比评测
 
-整理主结果、消融、训练曲线、典型成功/失败轨迹、资源成本和可复现实验命令。所有表格引用唯一实验 ID，区分诊断实验、正式实验和任何降级实验。
+状态：依赖 P5。
+
+1. 主对比在固定 dev 上比较“未训练的官方 post-trained 4B”与“由它启动的新 Full SFT”。Base 和旧 Base-init Full SFT 只作历史参考，不用于计算新 SFT 的主提升；27B Teacher 作为质量上界参考。
+2. 只有新 Full 通过 dev 门槛，再对固定 50k final test 做一次完整评测，减少对 final test 的反复调参。
+3. 若 canonical Prompt/上下文策略相对 v1 发生改变，所有需要横向比较的模型都在新协议下重测；不用新 Full v3 数字直接减旧 Full v1 数字。
+4. 主表同时报告总体与分数据集 EM/F1，全体/正确/错误样本的检索次数，以及失败类型。对 HotpotQA、2WikiMultiHopQA、MuSiQue 单独报告多跳改善。
+
+## RL 准入门槛
+
+以下条件全部满足后，才重新评估 Outcome GRPO → 成本感知 DAPO → 过程优势估计：
+
+1. Teacher/SFT/eval 的 canonical Prompt、角色和上下文策略已冻结，跨环节回归测试通过。
+2. 新 Full SFT 在独立 interactive dev 上稳定优于 Base 和旧 Full，尤其在多跳集上有改善。
+3. answer rate/格式合规率提高，search-limit/重复循环率降低；正确样本中有足够的 2+/3+ 轨迹，存在可优化的成功路径长度差异。
+4. 非空 EM/F1、格式奖励、搜索成本和状态等价逻辑均有单元测试，不再使用旧 Search-R1 的空串/答案抽取脆弱实现。
+5. 已完成新版上游 veRL + Qwen3.5/vLLM 的小规模 rollout/weight-sync/checkpoint 恢复 smoke test。
+
+满足后也不一次同时引入所有奖励：先做 outcome-only 小试验，再加组内最短成功路径成本奖励，最后单独评估过程级 advantage。
+
+## 当前明确不做
+
+- 不立即启动 GRPO/DAPO/RL，不在数据分布未修复时先压低搜索次数。
+- 不重训 LoRA；它已完成诊断使命，现有 v1 结果支持把资源用在 Full SFT。
+- v3 协议冻结并通过 pilot 后，不在同一次正式训练中继续修改 Prompt、top-k、token budget、学习率、batch size 和 epoch；若必须改变则建立独立实验，避免无法归因。
+- 不为达到简历中的 2.59 次而人工填充搜索；只接受能提供新证据或完成真实多跳的较长轨迹。
+- 不用 1k Teacher 成功轨迹的 loss 替代端到端 EM，也不只根据最低 loss 选 checkpoint。
+- 不频繁查看固定 50k final test 调参；日常决策使用独立 interactive dev。
+
+## 每个新实验的最小记录
+
+- 唯一实验 ID、Git commit、dirty diff、日期、随机种子。
+- 模型/数据/manifest/Prompt/protocol/tokenizer/chat template 的路径和 checksum。
+- GPU、Python/CUDA/PyTorch/Transformers/vLLM/LLaMA-Factory 版本。
+- 完整启动命令、训练配置、SwanLab run ID、日志和 checkpoint 路径。
+- 数据 QA、loss-mask QA、端到端指标及失败分布。
+- 恢复训练时记录恢复 checkpoint 和全局 step，不将重启后的局部 loss 序列当成新实验。
