@@ -1,0 +1,22 @@
+{
+  "extends": "searchqa_repro_v3_4_0.json",
+  "extends_sha256": "6de029cd6fc7e8cfa5612c1e03f484c83f84631423b4c09cd52f9e5141067983",
+  "human_version": "R3.5",
+  "protocol_id": "searchqa_repro_v3_5_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.1 runtime prefix with the concise prompt syntax already proven by the historical Teacher generator",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_5_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "prompt": {
+      "template": "Answer the question using the search tool. Search at least once. Keep reasoning concise inside <think>...</think>. To search, emit exactly <search>query</search>; after each search you will receive <information>...</information>. If the visible evidence is insufficient to support every required hop, search again. Finish with exactly <answer>final answer</answer>. Output no text outside the reasoning and the single search or answer action.\nQuestion: {question}\n"
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_4_0",
+      "change": "Replace meta-level runtime wording with the concise action prompt already used successfully by the historical Teacher generator.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0", "searchqa_repro_v3_4_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_5_0"
+    }
+  }
+}

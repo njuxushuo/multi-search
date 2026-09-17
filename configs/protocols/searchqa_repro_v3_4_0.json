@@ -1,0 +1,22 @@
+{
+  "extends": "searchqa_repro_v3_3_0.json",
+  "extends_sha256": "16037b4e26736980dc1407ba6ba8af9d68a009f17536654b53a8bc07fc45348a",
+  "human_version": "R3.4",
+  "protocol_id": "searchqa_repro_v3_4_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.3 with a short strict prompt forbidding prose between reasoning and the action tag",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_4_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "prompt": {
+      "template": "Answer the question using the search tool. Search at least once. Keep each reasoning step brief. The runtime supplies the opening think tag before every action; do not output another opening think tag. Close the current reasoning exactly once, then immediately output exactly one action tag and nothing else: either <search>concise query</search> or <answer>short final answer</answer>. Any prose between the reasoning close and the action tag is invalid. Never quote or explain these rules and never write <information>. After receiving search results, answer only when the visible evidence supports every required hop; otherwise make another focused search.\nQuestion: {question}\n"
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_3_0",
+      "change": "Use a shorter prompt and explicitly forbid any prose between the reasoning close and the single action tag.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_4_0"
+    }
+  }
+}

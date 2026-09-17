@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "human_version": "R3.1",
+  "protocol_id": "searchqa_repro_v3_1_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.0 with an environment-supplied Qwen think opener before every flat-continuation assistant action",
+  "models": {
+    "teacher": "models/Qwen3.5-27B",
+    "student_initial": "/data0/xs/models/Qwen3.5-4B",
+    "student_initial_type": "official_post_trained"
+  },
+  "data": {
+    "teacher_source": "data/processed/nq_hotpotqa_train/train.parquet",
+    "final_test_source": "data/processed/nq_hotpotqa_train/test.parquet",
+    "final_test_manifest": "data/processed/search_eval/searchqa_50k_seed42_hnb_first.jsonl",
+    "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_1_0/teacher_pilot_manifest_2k_seed42.jsonl",
+    "interactive_dev_manifest": "data/processed/search_eval/searchqa_v3_interactive_dev_5k_seed43_train_holdout.jsonl",
+    "interactive_dev_quick_manifest": "data/processed/search_eval/searchqa_v3_interactive_dev_quick_1k_seed43_train_holdout.jsonl",
+    "interactive_dev_count": 5000,
+    "interactive_dev_quick_count": 1000,
+    "interactive_dev_seed": 43,
+    "interactive_dev_hotpotqa_fraction": 0.7,
+    "interactive_dev_nq_fraction": 0.3
+  },
+  "prompt": {
+    "source": "parquet.prompt[0].content",
+    "template": "Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information. After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. You can search as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}\n",
+    "system_prompt": null,
+    "preserve_upstream_typo": true,
+    "chat_template_application": "initial_user_once_then_flat_continuation_with_action_think_prefix"
+  },
+  "retrieval": {
+    "corpus": "data/corpus/wiki-18.jsonl",
+    "index": "data/index/bm25",
+    "backend": "lucene_bm25_wikipedia_2018",
+    "url": "http://127.0.0.1:8000/retrieve",
+    "top_k": 3,
+    "observation_format": "Doc {rank}(Title: {title}) {text}",
+    "repeat_policy": "return_deterministic_cached_results_and_count_action",
+    "no_progress_policy": "continue_and_count_action",
+    "gold_aware_truncation": false
+  },
+  "interaction": {
+    "max_search_actions": 4,
+    "answer_only_after_budget": true,
+    "max_assistant_generations": 5,
+    "context_policy": "cumulative_flat_8k",
+    "strict_actions": [
+      "<think>...</think><search>...</search>",
+      "<think>...</think><answer>...</answer>"
+    ],
+    "restore_implicit_think_opener_for_qwen": true,
+    "inject_think_opener_each_generation": true
+  },
+  "token_budget": {
+    "max_model_len": 8192,
+    "initial_prompt_tokens": 512,
+    "max_new_tokens_per_action": 768,
+    "max_observation_tokens": 768,
+    "sft_cutoff_len": 8192,
+    "overflow_policy_teacher_sft": "reject_without_truncating",
+    "overflow_policy_eval": "fail_and_report",
+    "observation_truncation": "balanced_token_budget_across_topk"
+  },
+  "teacher_sampling": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "pilot_unique_questions": 2000,
+    "pilot_hotpotqa_fraction": 0.7,
+    "pilot_nq_fraction": 0.3,
+    "pilot_stratify_hotpot_type_level": true,
+    "rollouts_per_question": 4,
+    "pilot_candidate_rollouts": 8000,
+    "candidate_pool_target": 18000,
+    "scale_safety_multiplier": 1.2
+  },
+  "evaluation_sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "selection": {
+    "train_trajectories": 15000,
+    "teacher_forced_eval_trajectories": 1000,
+    "reserve_trajectories": 2000,
+    "one_trajectory_per_question": true,
+    "hotpotqa_fraction_target": 0.7,
+    "nq_fraction_target": 0.3,
+    "multi_search_fraction_min": 0.6,
+    "three_plus_search_fraction_target_min": 0.2,
+    "three_plus_search_fraction_target_max": 0.3,
+    "reject_repeated_query": true,
+    "reject_no_progress": true,
+    "reject_closed_book_answer": true,
+    "reject_generation_truncation": true,
+    "reject_sequence_overflow": true,
+    "hotpot_prefer_full_support_coverage": true,
+    "hotpot_grade_a_fraction_min": 0.85,
+    "hotpot_grade_b_fraction_max": 0.15,
+    "hotpot_grade_c_allowed": false,
+    "nq_grounded_fraction_min": 0.9
+  },
+  "loss": {
+    "prompt": false,
+    "think": true,
+    "search": true,
+    "information": false,
+    "answer": true,
+    "padding": false,
+    "environment_action_prefix": false,
+    "ignore_index": -100
+  },
+  "sft": {
+    "finetuning_type": "full",
+    "gpus": [0, 1, 2, 3],
+    "precision": "bf16",
+    "deepspeed": "zero3",
+    "gradient_checkpointing": true,
+    "global_batch_size": 8,
+    "learning_rate": 1e-5,
+    "scheduler": "cosine",
+    "warmup_ratio": 0.05,
+    "initial_epochs": 1,
+    "max_epochs_after_gate": 2,
+    "scheduler_horizon_epochs": 2,
+    "eval_steps": 250,
+    "interactive_dev_steps": 500,
+    "dynamic_padding": true,
+    "length_grouping": true,
+    "packing_default": false,
+    "seed": 42
+  },
+  "smoke_quality_gate": {
+    "format_compliance_rate_min": 0.9,
+    "generation_truncated_rate_max": 0.05,
+    "strict_eligible_rate_min": 0.15,
+    "exact_match_min": 0.2,
+    "mean_search_actions_min": 1.2,
+    "multi_search_fraction_min": 0.25
+  },
+  "versioning": {
+    "semantic_rule": "Any change to prompt, action grammar, retrieval top-k/format, context policy, search budget, token budget, rejection gates, loss mask, model initialization, or primary metric requires a new protocol version.",
+    "parent_protocol": "searchqa_repro_v3_0_0",
+    "change": "Inject and mask the Qwen <think> opener before every non-initial assistant action in the cumulative flat trajectory.",
+    "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0"],
+    "output_namespace": "outputs/v3/searchqa_repro_v3_1_0"
+  }
+}

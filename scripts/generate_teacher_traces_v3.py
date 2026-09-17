@@ -30,6 +30,7 @@ from protocol_v3 import (
     build_model_input,
     file_sha256,
     load_protocol,
+    max_new_tokens_for_action,
     normalize_answer,
     prompt_from_row,
     token_count,
@@ -279,7 +280,11 @@ def main() -> None:
                 for state in active:
                     try:
                         prompt_tokens = assert_generation_fits(
-                            tokenizer, state["initial_prompt"], state["trajectory"], config
+                            tokenizer,
+                            state["initial_prompt"],
+                            state["trajectory"],
+                            config,
+                            state["final_only"],
                         )
                     except ValueError:
                         state["sequence_overflow"] = True
@@ -287,12 +292,18 @@ def main() -> None:
                         state["done"], state["termination_reason"] = True, "context_overflow"
                         continue
                     state["prompt_token_count_by_round"].append(prompt_tokens)
-                    prompt, _ = build_model_input(tokenizer, state["initial_prompt"], state["trajectory"])
+                    prompt, _ = build_model_input(
+                        tokenizer,
+                        state["initial_prompt"],
+                        state["trajectory"],
+                        config,
+                        state["final_only"],
+                    )
                     prompts.append(prompt)
                     sampling_params.append(SamplingParams(
                         temperature=config["teacher_sampling"]["temperature"],
                         top_p=config["teacher_sampling"]["top_p"],
-                        max_tokens=config["token_budget"]["max_new_tokens_per_action"],
+                        max_tokens=max_new_tokens_for_action(config, state["final_only"]),
                         stop=["</search>", "</answer>"],
                         include_stop_str_in_output=True,
                         seed=int(state["rollout_seed"]),

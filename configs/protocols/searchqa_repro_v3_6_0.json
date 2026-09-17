@@ -1,0 +1,25 @@
+{
+  "extends": "searchqa_repro_v3_5_0.json",
+  "extends_sha256": "937762c6102445b82f36a49ce73339aa41e04554094c5041c78371f3f21bf055",
+  "human_version": "R3.6",
+  "protocol_id": "searchqa_repro_v3_6_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.5 with the four-search budget stated explicitly in the aligned prompt",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_6_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "prompt": {
+      "template": "Answer the question using the search tool. Search at least once. You may make at most four searches; after receiving results from the fourth search, you must answer and must not search again. Keep reasoning concise inside <think>...</think>. To search, emit exactly <search>query</search>; after each search you will receive <information>...</information>. If the visible evidence is insufficient to support every required hop and searches remain, search again. Finish with exactly <answer>final answer</answer>. Output no text outside the reasoning and the single search or answer action.\nQuestion: {question}\n"
+    },
+    "smoke_quality_gate": {
+      "search_limit_rate_max": 0.1
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_5_0",
+      "change": "State the existing four-search budget explicitly and reject smoke runs with more than 10% search-limit termination.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0", "searchqa_repro_v3_4_0", "searchqa_repro_v3_5_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_6_0"
+    }
+  }
+}

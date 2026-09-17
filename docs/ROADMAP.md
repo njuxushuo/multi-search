@@ -6,7 +6,7 @@
 
 下一阶段不启动 GRPO/DAPO。现有 Full SFT 已证明 SFT 方向有效，但冷启动数据中 72.05% 的样本只搜索一次，且 Teacher/SFT/评测的 Prompt 和上下文策略并未完全对齐。在这种初始策略上直接惩罚检索次数，很可能加剧过早回答，而不是学到更高效的多跳搜索。
 
-本路线的统一版本简称为 **R3.0**，机器 ID 为 `searchqa_repro_v3_0_0`；版本内所有阶段共享同一机器配置与语义。
+当前放行协议为 **R3.10**（`searchqa_repro_v3_10_0`）：64×4 smoke 已通过全部质量门槛，正在进入 2,000×4 正式 pilot。pilot 完成后按“每题至少一条严格合格轨迹”的真实产率和证据等级分布计算扩采题量，不能直接按候选级 EM 外推。
 
 模型起点已确定：27B Teacher 继续使用官方 post-trained `Qwen3.5-27B`；新 Full SFT Student 使用官方 post-trained `Qwen3.5-4B`（即本项目所说的 instruction-capable 模型），不再使用 `Qwen3.5-4B-Base`，也不进行两种初始化的训练对照。主要提升必须相对这个未训练的 post-trained 4B baseline 计算，以保证公平。
 

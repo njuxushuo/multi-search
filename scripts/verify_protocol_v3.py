@@ -164,7 +164,13 @@ def main() -> None:
                 {"kind": "observation", "text": "<information>\nDoc 1(Title: Author) Born in Paris.\n</information>"},
                 {"kind": "generated", "text": "<think>Answer.</think><answer>Paris</answer>"},
             ]
-            compiled = compile_sft_example(tokenizer, prompt, events, config["token_budget"]["sft_cutoff_len"])
+            compiled = compile_sft_example(
+                tokenizer,
+                prompt,
+                events,
+                config["token_budget"]["sft_cutoff_len"],
+                config=config,
+            )
             tokenizer_reports[role] = {
                 "class": type(tokenizer).__name__,
                 "initial_prompt_tokens": prompt_tokens,

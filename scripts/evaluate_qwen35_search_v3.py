@@ -20,6 +20,7 @@ from protocol_v3 import (
     canonical_prompt,
     file_sha256,
     load_protocol,
+    max_new_tokens_for_action,
     prompt_from_row,
     token_count,
 )
@@ -164,14 +165,17 @@ def main() -> None:
         enforce_eager=True,
         gdn_prefill_backend="triton",
     )
-    sampling = SamplingParams(
-        temperature=config["evaluation_sampling"]["temperature"],
-        top_p=config["evaluation_sampling"]["top_p"],
-        max_tokens=config["token_budget"]["max_new_tokens_per_action"],
-        stop=["</search>", "</answer>"],
-        include_stop_str_in_output=True,
-        seed=args.seed,
-    )
+    sampling_by_final_only = {
+        final_only: SamplingParams(
+            temperature=config["evaluation_sampling"]["temperature"],
+            top_p=config["evaluation_sampling"]["top_p"],
+            max_tokens=max_new_tokens_for_action(config, final_only),
+            stop=["</search>", "</answer>"],
+            include_stop_str_in_output=True,
+            seed=args.seed,
+        )
+        for final_only in (False, True)
+    }
     metadata = {
         "type": "metadata",
         "protocol_id": config["protocol_id"],
@@ -227,7 +231,11 @@ def main() -> None:
                 for state in active:
                     try:
                         prompt_tokens = assert_generation_fits(
-                            tokenizer, state["initial_prompt"], state["trajectory"], config
+                            tokenizer,
+                            state["initial_prompt"],
+                            state["trajectory"],
+                            config,
+                            state["final_only"],
                         )
                     except ValueError:
                         state["sequence_overflow"] = True
@@ -235,12 +243,21 @@ def main() -> None:
                         state["done"], state["termination_reason"] = True, "context_overflow"
                         continue
                     state["prompt_token_count_by_round"].append(prompt_tokens)
-                    prompt, _ = build_model_input(tokenizer, state["initial_prompt"], state["trajectory"])
+                    prompt, _ = build_model_input(
+                        tokenizer,
+                        state["initial_prompt"],
+                        state["trajectory"],
+                        config,
+                        state["final_only"],
+                    )
                     prompts.append(prompt)
                     runnable.append(state)
                 if not runnable:
                     continue
-                generated_batch = llm.generate(prompts, sampling)
+                generated_batch = llm.generate(
+                    prompts,
+                    [sampling_by_final_only[bool(state["final_only"])] for state in runnable],
+                )
                 for state, request_output in zip(runnable, generated_batch):
                     item = request_output.outputs[0]
                     apply_generation(

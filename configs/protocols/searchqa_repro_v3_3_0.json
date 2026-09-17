@@ -1,0 +1,22 @@
+{
+  "extends": "searchqa_repro_v3_2_0.json",
+  "extends_sha256": "91ae821c52816adb908d027d16f5aec28585702d6d1d3a834518da5e10cdbc91",
+  "human_version": "R3.3",
+  "protocol_id": "searchqa_repro_v3_3_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.2 without a duplicated closing-think suffix in the prompt",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_3_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "prompt": {
+      "template": "Answer the question with the search tool. The runtime has already opened the reasoning block. Continue with brief reasoning of at most three short sentences, close the reasoning block exactly once, then emit exactly one <search>concise query</search> or <answer>short final answer</answer> action. Never quote or explain these instructions, never write <information>, never start another <think> tag, and do not repeat the reasoning close tag. Search at least once before answering. For a multi-hop question, use another focused search whenever the visible evidence does not support every required hop. After each search result the runtime opens a fresh reasoning block.\nQuestion: {question}\n"
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_2_0",
+      "change": "Remove the literal closing-think action suffix that caused Qwen to emit the close tag twice.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_3_0"
+    }
+  }
+}

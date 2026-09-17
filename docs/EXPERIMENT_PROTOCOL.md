@@ -476,6 +476,34 @@ LLaMAFactory 的 `train_on_prompt=false` 不能单独证明 assistant 内部 inf
 
 Qwen3.5 官方 chat template 会在第一轮 assistant generation prefix 末尾自动加入 `<think>\n`。R3.0 保存的 canonical 首轮事件仍保留完整 `<think>...</think>`，但 runtime/SFT token 序列复用模板提供的第一个 opener，只监督首轮 think 正文和闭合标签；后续轮的完整 `<think>` 标签均由模型生成并参与 loss。实现必须断言不会产生 `<think>\n<think>` 双 opener。
 
+### R3.1 Teacher 格式修正试验（2026-09-17）
+
+R3.0 的 2,000×4 pilot 表明，连续平铺上下文在首轮之后不再带有 Qwen chat template 的 assistant generation prefix：第二轮约 78% 的输出直接以 `<search>`、`<answer>` 或普通文本开始，导致总格式合规率仅 12.93%。这不是检索错误，也不能通过放宽严格校验掩盖。
+
+R3.1（`searchqa_repro_v3_1_0`）保持 R3.0 的 prompt、累计上下文、top-k、预算、状态机和拒绝规则不变，只在每个非首轮 assistant action 开始前由运行时注入 `<think>\n`。canonical 轨迹仍保存完整 `<think>...</think>`；注入的 opener 属于环境输入，在 SFT labels 中为 `-100`，其余 think 正文和闭合标签继续计算 loss。R3.0 原始输出不覆盖。
+
+R3.1 首先只运行相同冻结题目的 64×4 smoke。进入 2,000×4 pilot 的最低门槛为：格式合规率 ≥90%、生成截断率 ≤5%、严格有效率 ≥15%、EM ≥20%、平均 search action ≥1.2，且至少 25% 候选执行 2 次及以上搜索。若未通过，只允许建立新的小版本继续 smoke，不得直接扩采。
+
+R3.1 smoke 的能力指标已显著恢复（严格有效率 37.89%、EM 41.41%、平均搜索 1.80、2+ 搜索占 49.22%），但格式合规率 76.56%、生成截断率 11.72%，未通过门槛。失败几乎都来自首轮：旧 prompt 诱发指令复述和超长枚举。R3.2（`searchqa_repro_v3_2_0`）因此保留 R3.1 的运行时前缀与全部环境语义，仅把统一 prompt 改为与已注入 opener 对齐的 action-suffix 说明，并要求最多三句简短推理。Teacher、SFT 和最终评测必须共同使用该 prompt；R3.2 仍需从同一 64×4 smoke 重新验收。
+
+R3.2 smoke 将生成截断降至 0，严格有效率 40.63%、EM 40.63%、平均搜索 2.01、2+ 搜索占 57.42%，但格式合规率 83.98%。41 个格式错误主要是 prompt 中的字面 `</think>` suffix 使模型在自然闭合后又复制一次。R3.3（`searchqa_repro_v3_3_0`）只移除该歧义：要求 reasoning block 恰好闭合一次，再输出一个 `<search>` 或 `<answer>` action；其余语义继承 R3.2 并继续用同一 smoke 验收。
+
+R3.3 smoke 的格式合规率提高到 85.94%、截断率 0.78%，但仍未达到 90%。剩余错误主要是在 reasoning 闭合后夹入额外解释再输出 action。R3.4（`searchqa_repro_v3_4_0`）采用更短、接近旧生成器的 prompt，明确闭合后必须立即输出唯一 action，任何中间 prose 都无效；检索与筛选口径不变。
+
+R3.4 的过度元指令使格式合规率回落到 80.08%、EM 回落到 32.42%，因此弃用。R3.5（`searchqa_repro_v3_5_0`）回到历史 Teacher 生成器已经验证过的简洁 action prompt，只补充“至少搜索一次、推理简洁、证据不足继续搜索”，并保留 R3.1 的逐 action opener 注入与严格解析。
+
+R3.5 smoke 通过原定门槛：格式合规 98.05%、截断 1.56%、严格有效率/EM 42.19%、平均搜索 2.39、2+ 搜索占 69.92%。但 25.39% 候选在四次搜索后仍请求第五次搜索，暴露 prompt 未声明状态机上限。R3.6（`searchqa_repro_v3_6_0`）只在同一简洁 prompt 中明确“最多四次，第四次结果后必须回答”，并新增 search-limit termination ≤10% 门槛；通过后才进入 2,000×4 pilot。
+
+R3.6 的首批结果显示，仅在初始 prompt 声明预算无法可靠保留到长上下文末端，search-limit 没有下降。R3.7（`searchqa_repro_v3_7_0`）回到 R3.5 prompt，并只在第四次 observation 后、最终 answer-only generation 前注入中性的“预算已耗尽、现在回答”提示；该环境提示在 SFT 中 mask，不含 gold 或答案信息。R3.7 同时沿用 search-limit ≤10% 门槛。
+
+R3.7 smoke 将 search-limit 降至 1.17%，格式合规 92.19%、严格有效率 42.58%、EM 44.14%，但最终回答回合的长复盘使截断率为 5.86%，比门槛多 2 条。R3.8（`searchqa_repro_v3_8_0`）仅将最终中性提示收紧为“一句简短推理、不复述证据、立即回答”，其他配置完全继承 R3.7。
+
+R3.8 smoke 的截断率降至 5.078%（13/256），仅多 1 条未过 5% 硬门槛；格式合规 94.14%、严格有效率 45.70%、EM 46.88%、search-limit 0.39%。R3.9（`searchqa_repro_v3_9_0`）不放宽门槛，只将最终 answer-only generation 的上限从 768 提到 1024。前四个 search action 仍为 768，因此最坏包络约为 `512 + 4×(768+768) + 1024 = 7680 < 8192`，不改变总上下文上限。
+
+R3.9 仍有 13 条截断：5 条在普通第 3 轮，8 条在最终回合；1024 不足以覆盖后者。R3.10（`searchqa_repro_v3_10_0`）将最终 answer-only 上限提高到可安全容纳的 1280，设计最坏包络为 `512 + 4×(768+768) + 1280 = 7936 < 8192`。普通 action、observation 和总窗口均不变。
+
+R3.10 的 64×4 smoke 已通过全部门槛：格式合规 94.92%、截断 4.30%、严格有效率 44.14%、EM 46.48%、平均 search action 2.41、2+ 搜索占 69.92%、search-limit 1.17%，retrieval/context overflow 均为 0。因此 R3.10 被选为进入 2,000×4 正式 pilot 的候选协议；R3.0–R3.9 输出只作消融记录，不混入 R3.10 候选池。
+
 ### 独立 interactive dev
 
 固定 50k final test 几乎占满 test parquet，剩余样本不足以构造 5k dev。因此 R3.0 在 Teacher 采样前从 train parquet 固定保留 5,000 题，并从所有 Teacher/SFT 候选中排除：

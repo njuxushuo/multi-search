@@ -1,0 +1,22 @@
+{
+  "extends": "searchqa_repro_v3_8_0.json",
+  "extends_sha256": "d79161f924e4c6b96861b67757e59b2b3b144b44dc48c5d619f968aa16a92db6",
+  "human_version": "R3.9",
+  "protocol_id": "searchqa_repro_v3_9_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.8 with a 1024-token budget only for the final answer-only generation",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_9_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "token_budget": {
+      "max_new_tokens_final_action": 1024
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_8_0",
+      "change": "Increase only the final answer-only generation budget from 768 to 1024; the 8192-token worst-case envelope remains valid.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0", "searchqa_repro_v3_4_0", "searchqa_repro_v3_5_0", "searchqa_repro_v3_6_0", "searchqa_repro_v3_7_0", "searchqa_repro_v3_8_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_9_0"
+    }
+  }
+}

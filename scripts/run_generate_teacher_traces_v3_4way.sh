@@ -16,6 +16,7 @@ MODEL="${TEACHER_MODEL:-models/Qwen3.5-27B}"
 PILOT_MANIFEST="${TEACHER_PILOT_MANIFEST:-data/processed/searchqa_repro_v3_0_0/teacher_pilot_manifest_2k_seed42.jsonl}"
 RETRIEVER_URL="${TEACHER_RETRIEVER_URL:-http://127.0.0.1:8000/retrieve}"
 PYTHON_BIN="${TEACHER_PYTHON:-/data3/xs/conda/envs/search-r1/bin/python}"
+PROTOCOL_CONFIG="${TEACHER_PROTOCOL_CONFIG:-configs/protocols/searchqa_repro_v3_0_0.json}"
 
 [[ -d "$MODEL" ]] || { echo "Missing Teacher model: $MODEL" >&2; exit 2; }
 [[ -f "$PILOT_MANIFEST" && -f "${PILOT_MANIFEST%.jsonl}.metadata.json" ]] || {
@@ -34,7 +35,7 @@ for gpu in "${gpu_list[@]}"; do
     exit 2
   fi
 done
-"$PYTHON_BIN" scripts/verify_protocol_v3.py --tokenizer-check >/dev/null
+"$PYTHON_BIN" scripts/verify_protocol_v3.py --protocol-config "$PROTOCOL_CONFIG" --tokenizer-check >/dev/null
 mkdir -p "$OUT_DIR" "$LOG_DIR"
 
 pids=()
@@ -44,6 +45,7 @@ for shard in 0 1 2 3; do
   log="$LOG_DIR/shard${shard}.log"
   CUDA_VISIBLE_DEVICES="$gpu" "$PYTHON_BIN" \
     scripts/generate_teacher_traces_v3.py \
+    --protocol-config "$PROTOCOL_CONFIG" \
     --teacher "$MODEL" --pilot-manifest "$PILOT_MANIFEST" \
     --question-count "$QUESTION_COUNT" \
     --rollouts-per-question "$ROLLOUTS" \

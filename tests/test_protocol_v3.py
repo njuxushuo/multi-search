@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from eval_protocol_v3 import apply_generation, build_result, initial_state  # noqa: E402
 from protocol_v3 import (  # noqa: E402
     DEFAULT_CONFIG,
+    build_model_input,
     canonical_prompt,
     compile_sft_example,
     format_observation,
@@ -227,6 +228,81 @@ class ProtocolV3Tests(unittest.TestCase):
         runtime = "".join(chr(value) for value in compiled["input_ids"])
         self.assertNotIn("<think>\n<think>", runtime)
         self.assertIn("<think>\nSearch.</think><search>X</search>", runtime)
+
+    def test_injected_action_prefix_is_runtime_input_and_masked(self) -> None:
+        config = dict(self.config)
+        config["interaction"] = dict(self.config["interaction"])
+        config["interaction"]["inject_think_opener_each_generation"] = True
+        prompt = canonical_prompt("Where?", config)
+        events = [
+            {"kind": "generated", "text": "<think>Search.</think><search>X</search>"},
+            {"kind": "observation", "text": "<information>Doc 1(Title: X) Paris</information>"},
+            {"kind": "generated", "text": "<think>Answer.</think><answer>Paris</answer>"},
+        ]
+        compiled = compile_sft_example(
+            self.tokenizer, prompt, events, max_length=8192, config=config
+        )
+        prefix_spans = [span for span in compiled["spans"] if span["kind"] == "action_prefix"]
+        self.assertEqual(len(prefix_spans), 1)
+        prefix = prefix_spans[0]
+        self.assertTrue(all(
+            value == -100 for value in compiled["labels"][prefix["start"]:prefix["end"]]
+        ))
+        runtime, _ = build_model_input(
+            self.tokenizer,
+            prompt,
+            "<think>Search.</think><search>X</search>\n\n"
+            "<information>Doc 1(Title: X) Paris</information>",
+            config,
+        )
+        self.assertTrue(runtime.endswith("<think>\n"))
+
+    def test_final_only_runtime_prefix_adds_neutral_answer_instruction(self) -> None:
+        config = dict(self.config)
+        config["interaction"] = dict(self.config["interaction"])
+        config["interaction"].update({
+            "inject_think_opener_each_generation": True,
+            "final_answer_instruction": "Search budget exhausted. Answer now; do not search again.",
+        })
+        runtime, _ = build_model_input(
+            self.tokenizer,
+            canonical_prompt("Where?", config),
+            "<think>Search.</think><search>X</search>\n\n"
+            "<information>Doc 1(Title: X) Paris</information>",
+            config,
+            final_only=True,
+        )
+        self.assertTrue(runtime.endswith(
+            "Search budget exhausted. Answer now; do not search again.\n\n<think>\n"
+        ))
+
+        events = []
+        for index in range(4):
+            events.extend([
+                {"kind": "generated", "text": f"<think>S{index}.</think><search>Q{index}</search>"},
+                {"kind": "observation", "text": f"<information>Doc 1(Title: X) E{index}</information>"},
+            ])
+        events.append({
+            "kind": "generated",
+            "text": "<think>Done.</think><answer>Paris</answer>",
+        })
+        compiled = compile_sft_example(
+            self.tokenizer,
+            canonical_prompt("Where?", config),
+            events,
+            max_length=8192,
+            config=config,
+        )
+        reminder_spans = [
+            span for span in compiled["spans"]
+            if span["kind"] == "final_answer_instruction"
+        ]
+        self.assertEqual(len(reminder_spans), 1)
+        reminder = reminder_spans[0]
+        self.assertTrue(all(
+            value == -100
+            for value in compiled["labels"][reminder["start"]:reminder["end"]]
+        ))
 
 
 if __name__ == "__main__":

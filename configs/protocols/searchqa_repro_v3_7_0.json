@@ -1,0 +1,28 @@
+{
+  "extends": "searchqa_repro_v3_5_0.json",
+  "extends_sha256": "937762c6102445b82f36a49ce73339aa41e04554094c5041c78371f3f21bf055",
+  "human_version": "R3.7",
+  "protocol_id": "searchqa_repro_v3_7_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.5 with a neutral answer-only reminder injected after the fourth search observation",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_7_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "interaction": {
+      "final_answer_instruction": "The search budget is exhausted. You must answer now with <answer>short final answer</answer> and must not search again."
+    },
+    "loss": {
+      "environment_final_answer_instruction": false
+    },
+    "smoke_quality_gate": {
+      "search_limit_rate_max": 0.1
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_5_0",
+      "change": "Inject a neutral masked answer-only reminder after the fourth observation instead of relying on the initial prompt to preserve the budget state.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0", "searchqa_repro_v3_4_0", "searchqa_repro_v3_5_0", "searchqa_repro_v3_6_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_7_0"
+    }
+  }
+}

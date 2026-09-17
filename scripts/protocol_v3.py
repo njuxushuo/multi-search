@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared, CPU-testable primitives for the frozen R3.0 protocol.
+"""Shared, CPU-testable primitives for versioned R3 protocols.
 
 This module is the single source of truth used by Teacher sampling, SFT data
 compilation and end-to-end evaluation.  Historical v0/v1 entrypoints do not
@@ -49,19 +49,51 @@ class FormattedObservation:
 def load_protocol(path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
     config_path = Path(path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    if "extends" in config:
+        base_path = config_path.parent / str(config["extends"])
+        expected_sha = str(config.get("extends_sha256", ""))
+        if not expected_sha or file_sha256(base_path) != expected_sha:
+            raise ValueError("protocol base config checksum mismatch")
+        base = load_protocol(base_path)
+
+        def merge(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+            result = dict(left)
+            for key, value in right.items():
+                if isinstance(value, dict) and isinstance(result.get(key), dict):
+                    result[key] = merge(result[key], value)
+                else:
+                    result[key] = value
+            return result
+
+        overlay = dict(config.get("overrides") or {})
+        overlay.update({
+            key: value for key, value in config.items()
+            if key not in {"extends", "extends_sha256", "overrides"}
+        })
+        config = merge(base, overlay)
     required = {"schema_version", "human_version", "protocol_id", "prompt", "retrieval", "interaction", "token_budget"}
     missing = sorted(required - set(config))
     if missing:
         raise ValueError(f"protocol config missing keys: {missing}")
-    if config["human_version"] != "R3.0" or config["protocol_id"] != "searchqa_repro_v3_0_0":
-        raise ValueError("this module only implements frozen R3.0")
+    expected_id = "searchqa_repro_v" + config["human_version"].lower().replace("r", "").replace(".", "_") + "_0"
+    if not re.fullmatch(r"R3\.\d+", str(config["human_version"])) or config["protocol_id"] != expected_id:
+        raise ValueError("this module only implements versioned R3.x protocols")
     if config["retrieval"]["top_k"] != 3:
-        raise ValueError("R3.0 is frozen to top_k=3")
+        raise ValueError("R3 protocol is frozen to top_k=3")
     if config["interaction"]["max_search_actions"] != 4:
-        raise ValueError("R3.0 is frozen to four search actions")
+        raise ValueError("R3 protocol is frozen to four search actions")
     budgets = config["token_budget"]
     if (budgets["max_model_len"], budgets["max_new_tokens_per_action"], budgets["max_observation_tokens"]) != (8192, 768, 768):
-        raise ValueError("R3.0 token budget must remain 8192/768/768")
+        raise ValueError("R3 token budget must remain 8192/768/768")
+    final_tokens = int(budgets.get("max_new_tokens_final_action", budgets["max_new_tokens_per_action"]))
+    worst_case = (
+        int(budgets["initial_prompt_tokens"])
+        + int(config["interaction"]["max_search_actions"])
+        * (int(budgets["max_new_tokens_per_action"]) + int(budgets["max_observation_tokens"]))
+        + final_tokens
+    )
+    if final_tokens < int(budgets["max_new_tokens_per_action"]) or worst_case > int(budgets["max_model_len"]):
+        raise ValueError(f"R3 token budget envelope exceeds max_model_len: {worst_case}")
     return config
 
 
@@ -148,6 +180,11 @@ def canonical_prompt(question: str, config: dict[str, Any]) -> str:
 def prompt_from_row(row: dict[str, Any], config: dict[str, Any]) -> str:
     """Read the dataset prompt and reject drift from the frozen template."""
     expected = canonical_prompt(str(row.get("question", "")), config)
+    source = str((config.get("prompt") or {}).get("source", ""))
+    if source == "protocol_config.template":
+        return expected
+    if source != "parquet.prompt[0].content":
+        raise ValueError(f"unsupported_prompt_source:{source}")
     prompt = row.get("prompt")
     if prompt is None:
         raise ValueError("missing_dataset_prompt")
@@ -197,6 +234,13 @@ def _token_ids(tokenizer: Any, text: str) -> list[int]:
 
 def token_count(tokenizer: Any, text: str) -> int:
     return len(_token_ids(tokenizer, text))
+
+
+def max_new_tokens_for_action(config: dict[str, Any], final_only: bool = False) -> int:
+    budget = config["token_budget"]
+    if final_only:
+        return int(budget.get("max_new_tokens_final_action", budget["max_new_tokens_per_action"]))
+    return int(budget["max_new_tokens_per_action"])
 
 
 def _decode_prefix(tokenizer: Any, text: str, tokens: int) -> str:
@@ -319,16 +363,57 @@ def append_observation_event(trajectory: str, observation: str) -> str:
     return trajectory + separator + observation.strip()
 
 
-def build_model_input(tokenizer: Any, initial_prompt: str, trajectory: str) -> tuple[str, int]:
+def action_generation_prefix(
+    config: dict[str, Any] | None,
+    trajectory: str,
+    final_only: bool = False,
+) -> str:
+    """Return the environment-supplied prefix for a non-initial action.
+
+    Qwen's chat template supplies ``<think>`` for the first assistant action.
+    A flat tool trajectory has no later assistant header, so protocols that
+    retain flat continuation must explicitly supply the same opener after an
+    observation.  It is environment input, not a Teacher-generated token.
+    """
+    if not trajectory or not config:
+        return ""
+    interaction = config.get("interaction") or {}
+    if interaction.get("inject_think_opener_each_generation"):
+        reminder = ""
+        if final_only and interaction.get("final_answer_instruction"):
+            reminder = "\n\n" + str(interaction["final_answer_instruction"]).strip()
+        return reminder + "\n\n<think>\n"
+    return ""
+
+
+def build_model_input(
+    tokenizer: Any,
+    initial_prompt: str,
+    trajectory: str,
+    config: dict[str, Any] | None = None,
+    final_only: bool = False,
+) -> tuple[str, int]:
     rendered = render_initial_prompt(tokenizer, initial_prompt)
-    text = rendered + materialize_runtime_trajectory(rendered, trajectory)
+    text = (
+        rendered
+        + materialize_runtime_trajectory(rendered, trajectory)
+        + action_generation_prefix(config, trajectory, final_only)
+    )
     return text, token_count(tokenizer, text)
 
 
-def assert_generation_fits(tokenizer: Any, initial_prompt: str, trajectory: str, config: dict[str, Any]) -> int:
-    _, prompt_tokens = build_model_input(tokenizer, initial_prompt, trajectory)
+def assert_generation_fits(
+    tokenizer: Any,
+    initial_prompt: str,
+    trajectory: str,
+    config: dict[str, Any],
+    final_only: bool = False,
+) -> int:
+    _, prompt_tokens = build_model_input(
+        tokenizer, initial_prompt, trajectory, config, final_only
+    )
     budget = config["token_budget"]
-    if prompt_tokens + budget["max_new_tokens_per_action"] > budget["max_model_len"]:
+    if prompt_tokens + max_new_tokens_for_action(config, final_only) > budget["max_model_len"]:
         raise ValueError("context_overflow")
     return prompt_tokens
 
@@ -354,18 +439,50 @@ def compile_sft_example(
     events: Sequence[dict[str, Any]],
     max_length: int = 8192,
     ignore_index: int = IGNORE_INDEX,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile one flat trajectory with exact span-level information masking."""
     rendered = render_initial_prompt(tokenizer, initial_prompt)
     pieces: list[tuple[str, bool, str]] = [(rendered, False, "prompt")]
+    inject_action_prefix = bool(
+        config
+        and (config.get("interaction") or {}).get("inject_think_opener_each_generation")
+    )
+    searches_seen = 0
     for index, event in enumerate(events):
         event_text = _event_text(dict(event))
+        parsed_action = parse_action(event_text) if event.get("kind") == "generated" else None
         if index == 0 and event.get("kind") == "generated":
             event_text = runtime_first_action(rendered, event_text)
         separator = "" if index == 0 else "\n\n"
         if separator:
             pieces.append((separator, False, "separator"))
+        if (
+            inject_action_prefix
+            and parsed_action is not None
+            and parsed_action.kind == "answer"
+            and searches_seen >= int((config or {}).get("interaction", {}).get("max_search_actions", 4))
+            and (config or {}).get("interaction", {}).get("final_answer_instruction")
+        ):
+            pieces.append((
+                str(config["interaction"]["final_answer_instruction"]).strip(),
+                False,
+                "final_answer_instruction",
+            ))
+            pieces.append(("\n\n", False, "separator"))
+        if (
+            inject_action_prefix
+            and index > 0
+            and event.get("kind") == "generated"
+            and events[index - 1].get("kind") == "observation"
+        ):
+            if not re.match(r"\s*<think>", event_text, re.I):
+                raise ValueError("generated_action_missing_canonical_think")
+            pieces.append(("<think>\n", False, "action_prefix"))
+            event_text = re.sub(r"\A\s*<think>", "", event_text, count=1, flags=re.I)
         pieces.append((event_text, event.get("kind") == "generated", str(event.get("kind"))))
+        if parsed_action is not None and parsed_action.kind == "search":
+            searches_seen += 1
 
     input_ids: list[int] = []
     labels: list[int] = []

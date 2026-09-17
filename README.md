@@ -9,7 +9,7 @@
 - [`docs/EXPERIMENT_PROTOCOL.md`](docs/EXPERIMENT_PROTOCOL.md)：历史 v0/v1/v2 口径与已冻结的 R3.0 完整复现实验协议。
 - [`docs/RESULTS.md`](docs/RESULTS.md)：已完成实验的正式结果，不记录运行中指标。
 
-下一轮统一复现实验版本为 **R3.0**（机器 ID `searchqa_repro_v3_0_0`）。后续提到 R3.0，即指 `configs/protocols/searchqa_repro_v3_0_0.json` 与实验协议中冻结的完整 Teacher→筛选→Full SFT→评测方案。
+当前放行的下一轮协议为 **R3.10**（`searchqa_repro_v3_10_0`）：64×4 Teacher smoke 已通过全部质量门槛，正在进入 2,000×4 pilot。R3.0–R3.9 的配置和输出独立保留，只作诊断消融，不混入正式候选池。
 
 ## 环境入口
 

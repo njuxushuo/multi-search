@@ -110,6 +110,7 @@ def main() -> None:
             candidate["events"],
             max_length=config["token_budget"]["sft_cutoff_len"],
             ignore_index=config["loss"]["ignore_index"],
+            config=config,
         )
         labels = compiled["labels"]
         input_ids = compiled["input_ids"]

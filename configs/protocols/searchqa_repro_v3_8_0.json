@@ -1,0 +1,22 @@
+{
+  "extends": "searchqa_repro_v3_7_0.json",
+  "extends_sha256": "1187a4902f14f49d5a61c6130e3329203d9f11ed6efb182fe94d2667b56dded8",
+  "human_version": "R3.8",
+  "protocol_id": "searchqa_repro_v3_8_0",
+  "status": "teacher_smoke_refinement",
+  "description": "R3.7 with a concise final-only reminder to avoid answer-round truncation",
+  "overrides": {
+    "data": {
+      "teacher_pilot_manifest": "data/processed/searchqa_repro_v3_8_0/teacher_pilot_manifest_2k_seed42.jsonl"
+    },
+    "interaction": {
+      "final_answer_instruction": "The search budget is exhausted. Do not search again and do not review or repeat the evidence. Use at most one short reasoning sentence, then answer now with <answer>short final answer</answer>."
+    },
+    "versioning": {
+      "parent_protocol": "searchqa_repro_v3_7_0",
+      "change": "Require at most one short reasoning sentence in the final-only generation to avoid 768-token truncation.",
+      "historical_protocols": ["v0", "v1", "v2", "searchqa_repro_v3_0_0", "searchqa_repro_v3_1_0", "searchqa_repro_v3_2_0", "searchqa_repro_v3_3_0", "searchqa_repro_v3_4_0", "searchqa_repro_v3_5_0", "searchqa_repro_v3_6_0", "searchqa_repro_v3_7_0"],
+      "output_namespace": "outputs/v3/searchqa_repro_v3_8_0"
+    }
+  }
+}

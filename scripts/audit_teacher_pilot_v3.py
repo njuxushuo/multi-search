@@ -38,6 +38,7 @@ def main() -> None:
     parser.add_argument("--rollouts-per-question", type=int, default=4)
     parser.add_argument("--output", required=True)
     parser.add_argument("--operational-gate", action="store_true")
+    parser.add_argument("--quality-gate", action="store_true")
     args = parser.parse_args()
 
     config = load_protocol(args.protocol_config)
@@ -125,11 +126,16 @@ def main() -> None:
         "strict_eligible_rate": len(strict) / len(candidates),
         "exact_match": sum(int(row.get("exact_match", 0)) for row in candidates) / len(candidates),
         "format_compliance_rate": sum(bool(row.get("format_compliant")) for row in candidates) / len(candidates),
+        "generation_truncated_rate": termination.get("generation_truncated", 0) / len(candidates),
+        "search_limit_rate": termination.get("search_limit", 0) / len(candidates),
         "source_counts": dict(source_counts),
         "search_action_distribution": {str(key): value for key, value in sorted(search_actions.items())},
         "mean_search_actions": sum(int(row.get("search_action_count", 0)) for row in candidates) / len(candidates),
         "mean_bm25_executions": sum(int(row.get("bm25_execution_count", 0)) for row in candidates) / len(candidates),
         "mean_unique_documents": sum(int(row.get("unique_document_count", 0)) for row in candidates) / len(candidates),
+        "multi_search_fraction": sum(
+            int(row.get("search_action_count", 0)) >= 2 for row in candidates
+        ) / len(candidates),
         "termination_reasons": dict(termination),
         "rejection_reasons_multi_label": dict(rejections),
         "correct_after_repeat_or_no_progress": sum(
@@ -155,12 +161,47 @@ def main() -> None:
         "passed": not any(operational_failures.values()),
         "failures": operational_failures,
     }
+    quality = config.get("smoke_quality_gate") or {}
+    quality_failures = {}
+    if quality:
+        minimums = {
+            "format_compliance_rate": "format_compliance_rate_min",
+            "strict_eligible_rate": "strict_eligible_rate_min",
+            "exact_match": "exact_match_min",
+            "mean_search_actions": "mean_search_actions_min",
+            "multi_search_fraction": "multi_search_fraction_min",
+        }
+        for metric, threshold_key in minimums.items():
+            threshold = float(quality[threshold_key])
+            actual = float(report[metric])
+            if actual < threshold:
+                quality_failures[metric] = {"actual": actual, "required_min": threshold}
+        threshold = float(quality["generation_truncated_rate_max"])
+        actual = float(report["generation_truncated_rate"])
+        if actual > threshold:
+            quality_failures["generation_truncated_rate"] = {
+                "actual": actual, "required_max": threshold,
+            }
+        if "search_limit_rate_max" in quality:
+            threshold = float(quality["search_limit_rate_max"])
+            actual = float(report["search_limit_rate"])
+            if actual > threshold:
+                quality_failures["search_limit_rate"] = {
+                    "actual": actual, "required_max": threshold,
+                }
+    report["quality_gate"] = {
+        "configured": bool(quality),
+        "passed": bool(quality) and not quality_failures,
+        "failures": quality_failures,
+    }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
     if args.operational_gate and not report["operational_gate"]["passed"]:
-        raise SystemExit("R3.0 Teacher operational gate failed")
+        raise SystemExit(f"{config['human_version']} Teacher operational gate failed")
+    if args.quality_gate and not report["quality_gate"]["passed"]:
+        raise SystemExit(f"{config['human_version']} Teacher quality gate failed")
 
 
 if __name__ == "__main__":
